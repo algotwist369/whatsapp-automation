@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { authenticate } from '../middleware/auth';
 import { z } from 'zod';
+import User from '../models/User';
+import redis from '../config/redis';
 
 const router = Router();
 
@@ -47,7 +49,16 @@ const settingsSchema = z.object({
 // Get user settings
 router.get('/', authenticate, async (req: Request, res: Response) => {
   try {
-    const user = req.user!;
+    const userId = req.user!._id;
+    
+    // Get fresh user data from database
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
     
     // Get settings from user document or return defaults
     const settings = user.settings || {
@@ -105,11 +116,20 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
 // Update user settings
 router.put('/', authenticate, async (req: Request, res: Response) => {
   try {
-    const user = req.user!;
+    const userId = req.user!._id;
     const updates = req.body;
 
     // Validate the input using Zod
     const validatedData = settingsSchema.parse(updates);
+
+    // Get the current user document from database
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
 
     // Update user settings
     const currentSettings = user.settings || {};
@@ -118,6 +138,10 @@ router.put('/', authenticate, async (req: Request, res: Response) => {
     // Update user document
     user.settings = newSettings;
     await user.save();
+
+    // Clear user cache to ensure fresh data
+    const cacheKey = `user:${userId}`;
+    await redis.del(cacheKey);
 
     res.json({
       success: true,
@@ -146,7 +170,7 @@ router.put('/', authenticate, async (req: Request, res: Response) => {
 // Reset settings to defaults
 router.post('/reset', authenticate, async (req: Request, res: Response) => {
   try {
-    const user = req.user!;
+    const userId = req.user!._id;
     
     const defaultSettings = {
       messageDelay: 2,
@@ -187,8 +211,21 @@ router.post('/reset', authenticate, async (req: Request, res: Response) => {
       compactMode: false,
     };
 
+    // Get the current user document from database
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
     user.settings = defaultSettings;
     await user.save();
+
+    // Clear user cache to ensure fresh data
+    const cacheKey = `user:${userId}`;
+    await redis.del(cacheKey);
 
     res.json({
       success: true,

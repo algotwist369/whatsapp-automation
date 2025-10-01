@@ -22,18 +22,20 @@ const HeaderComponent = ({ title, subtitle, onMobileMenuClick }: HeaderProps) =>
       <div className="h-6 w-px bg-gray-200 lg:hidden" aria-hidden="true" />
 
       <div className="flex flex-1 gap-x-4 self-stretch lg:gap-x-6">
-        <div className="flex flex-1 items-center">
-          <div className="flex-1">
-            <h1 className="text-lg font-semibold text-gray-900">{title}</h1>
+        <div className="flex flex-1 items-center min-w-0">
+          <div className="flex-1 min-w-0">
+            <h1 className="text-lg font-semibold text-gray-900 truncate">{title}</h1>
             {subtitle && (
-              <p className="text-sm text-gray-500">{subtitle}</p>
+              <p className="text-sm text-gray-500 truncate">{subtitle}</p>
             )}
           </div>
         </div>
 
-        <div className="flex items-center gap-x-4 lg:gap-x-6">
-          {/* WhatsApp Connection Status */}
-          <WhatsAppStatusIndicator size="sm" className="text-gray-500" />
+        <div className="flex items-center gap-x-2 sm:gap-x-4 lg:gap-x-6">
+          {/* WhatsApp Connection Status - hidden on very small screens */}
+          <div className="hidden sm:block">
+            <WhatsAppStatusIndicator size="sm" className="text-gray-500" />
+          </div>
 
           {/* Profile dropdown */}
           <div className="flex items-center space-x-2">

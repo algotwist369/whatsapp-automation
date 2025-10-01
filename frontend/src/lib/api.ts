@@ -15,7 +15,12 @@ import {
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 console.log("API_BASE_URL", API_BASE_URL);
-// Create axios instance
+
+// Request cache and deduplication
+const requestCache = new Map<string, Promise<any>>();
+const cache = new Map<string, { data: any; timestamp: number; ttl: number }>();
+
+// Create axios instance with optimized settings
 const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
@@ -24,19 +29,37 @@ const api = axios.create({
   },
 });
 
-// Request interceptor to add auth token
-api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
+// Cache helper functions
+const getCacheKey = (url: string, params?: any) => {
+  return `${url}${params ? JSON.stringify(params) : ''}`;
+};
+
+const getFromCache = (key: string) => {
+  const cached = cache.get(key);
+  if (cached && Date.now() - cached.timestamp < cached.ttl) {
+    return cached.data;
   }
-);
+  cache.delete(key);
+  return null;
+};
+
+const setCache = (key: string, data: any, ttl: number = 300000) => { // 5 minutes default
+  cache.set(key, { data, timestamp: Date.now(), ttl });
+};
+
+// Request deduplication
+const deduplicateRequest = <T>(key: string, requestFn: () => Promise<T>): Promise<T> => {
+  if (requestCache.has(key)) {
+    return requestCache.get(key)!;
+  }
+  
+  const promise = requestFn().finally(() => {
+    requestCache.delete(key);
+  });
+  
+  requestCache.set(key, promise);
+  return promise;
+};
 
 // Request interceptor to add auth token
 api.interceptors.request.use(
@@ -105,23 +128,44 @@ export const authApi = {
 // WhatsApp API
 export const whatsappApi = {
   connect: async (): Promise<ApiResponse<{ qr?: string; isConnected: boolean }>> => {
-    const response = await api.post('/whatsapp/connect');
-    return response.data;
+    return deduplicateRequest('whatsapp-connect', async () => {
+      const response = await api.post('/whatsapp/connect', {}, {
+        timeout: 500, // 0.5 seconds for initial connection attempt
+      });
+      return response.data;
+    });
   },
 
   getStatus: async (): Promise<ApiResponse<WhatsAppConnection>> => {
-    const response = await api.get('/whatsapp/status');
-    return response.data;
+    const cacheKey = getCacheKey('/whatsapp/status');
+    const cached = getFromCache(cacheKey);
+    
+    if (cached) {
+      return cached;
+    }
+
+    return deduplicateRequest('whatsapp-status', async () => {
+      const response = await api.get('/whatsapp/status');
+      const data = response.data;
+      setCache(cacheKey, data, 30000); // Cache for 30 seconds
+      return data;
+    });
   },
 
   getQR: async (): Promise<ApiResponse<{ qr: string; isConnected: boolean }>> => {
-    const response = await api.get('/whatsapp/qr');
-    return response.data;
+    return deduplicateRequest('whatsapp-qr', async () => {
+      const response = await api.get('/whatsapp/qr');
+      return response.data;
+    });
   },
 
   disconnect: async (): Promise<ApiResponse> => {
-    const response = await api.post('/whatsapp/disconnect');
-    return response.data;
+    return deduplicateRequest('whatsapp-disconnect', async () => {
+      const response = await api.post('/whatsapp/disconnect');
+      // Clear cache after disconnect
+      cache.delete(getCacheKey('/whatsapp/status'));
+      return response.data;
+    });
   },
 
   sendTestMessage: async (data: {
@@ -141,22 +185,51 @@ export const contactsApi = {
     search?: string;
     tags?: string;
   }): Promise<ApiResponse<ContactsResponse>> => {
-    const response = await api.get('/contacts', { params });
-    return response.data;
+    const cacheKey = getCacheKey('/contacts', params);
+    const cached = getFromCache(cacheKey);
+    
+    if (cached) {
+      return cached;
+    }
+
+    return deduplicateRequest(`contacts-${cacheKey}`, async () => {
+      const response = await api.get('/contacts', { params });
+      const data = response.data;
+      setCache(cacheKey, data, 60000); // Cache for 1 minute
+      return data;
+    });
   },
 
   addContact: async (contactData: ContactFormData): Promise<ApiResponse<{ contact: Contact }>> => {
     const response = await api.post('/contacts', contactData);
+    // Clear contacts cache
+    cache.forEach((_, key) => {
+      if (key.includes('/contacts')) {
+        cache.delete(key);
+      }
+    });
     return response.data;
   },
 
   updateContact: async (id: string, contactData: ContactFormData): Promise<ApiResponse<{ contact: Contact }>> => {
     const response = await api.put(`/contacts/${id}`, contactData);
+    // Clear contacts cache
+    cache.forEach((_, key) => {
+      if (key.includes('/contacts')) {
+        cache.delete(key);
+      }
+    });
     return response.data;
   },
 
   deleteContact: async (id: string): Promise<ApiResponse> => {
     const response = await api.delete(`/contacts/${id}`);
+    // Clear contacts cache
+    cache.forEach((_, key) => {
+      if (key.includes('/contacts')) {
+        cache.delete(key);
+      }
+    });
     return response.data;
   },
 
@@ -175,9 +248,38 @@ export const contactsApi = {
         'Content-Type': 'multipart/form-data',
       },
     });
+    // Clear contacts cache
+    cache.forEach((_, key) => {
+      if (key.includes('/contacts')) {
+        cache.delete(key);
+      }
+    });
     return response.data;
   },
+};
 
+// Cache utility functions
+export const cacheUtils = {
+  clearCache: (pattern?: string) => {
+    if (pattern) {
+      cache.forEach((_, key) => {
+        if (key.includes(pattern)) {
+          cache.delete(key);
+        }
+      });
+    } else {
+      cache.clear();
+    }
+  },
+  
+  clearRequestCache: () => {
+    requestCache.clear();
+  },
+  
+  getCacheStats: () => ({
+    cacheSize: cache.size,
+    requestCacheSize: requestCache.size,
+  }),
 };
 
 // Messages API

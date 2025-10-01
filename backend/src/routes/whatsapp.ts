@@ -8,12 +8,12 @@ const router = Router();
 // @route   POST /api/whatsapp/connect
 // @desc    Connect WhatsApp account
 // @access  Private
-router.post('/connect', authenticate, async (req: Request, res: Response) => {
+router.post('/connect', authenticate, (req: Request, res: Response) => {
   try {
     const user = req.user!;
     const userId = user._id.toString();
 
-    // Check if already connected
+    // Check if already connected (synchronous check only)
     if (user.whatsappConnected) {
       const isStillConnected = whatsappService.isConnected(userId);
       if (isStillConnected) {
@@ -25,48 +25,32 @@ router.post('/connect', authenticate, async (req: Request, res: Response) => {
       }
     }
 
-    // Get user settings
-    const userSettings = user.settings || {};
-    
-    // Create new connection with user settings
-    const result = await whatsappService.createConnection(userId, userSettings);
-
-    if (!result.success) {
-      return res.status(400).json({
-        success: false,
-        message: result.message
-      });
-    }
-
-    // Update user's WhatsApp connection status
-    if (result.qr) {
-      // QR code generated, but not yet connected
-      await User.findByIdAndUpdate(userId, { whatsappConnected: false });
-    }
-
-    // If no QR code was generated immediately, wait a bit for it
-    let qrCode = result.qr;
-    if (!qrCode) {
-      console.log('No QR code in initial response, waiting for generation...');
-      qrCode = await whatsappService.waitForQRCode(userId, 8000); // Reduced wait time to 8 seconds for faster response
-    }
-
-    // If still no QR code after waiting, return appropriate message
-    if (!qrCode) {
-      return res.status(400).json({
-        success: false,
-        message: 'QR code generation failed. Please try again.'
-      });
-    }
-
+    // Return immediately - no async processing
+    console.log('Connection initiated, returning immediately for faster response');
     res.json({
       success: true,
-      message: result.message,
+      message: 'Connection initiated. QR code will appear via real-time updates.',
       data: {
-        qr: qrCode,
+        qr: null,
         isConnected: false
       }
     });
+
+    // Process connection asynchronously in the background
+    // Use setTimeout to ensure response is sent first
+    setTimeout(async () => {
+      try {
+        const userSettings = user.settings || {};
+        const result = await whatsappService.createConnection(userId, userSettings);
+        
+        if (result.success && result.qr) {
+          // Update user's WhatsApp connection status
+          await User.findByIdAndUpdate(userId, { whatsappConnected: false });
+        }
+      } catch (error) {
+        console.error('Background connection error:', error);
+      }
+    }, 0);
 
   } catch (error) {
     console.error('WhatsApp connection error:', error);
@@ -92,8 +76,34 @@ router.get('/status', authenticate, async (req: Request, res: Response) => {
       userId, 
       isConnected: status.isConnected, 
       state: status.state, 
-      hasQR: !!qr 
+      hasQR: !!qr,
+      dbStatus: user.whatsappConnected
     });
+
+    // If user has WhatsApp connected in database but no active connection, try to restore
+    if (user.whatsappConnected && !status.isConnected && status.state === 'not_connected') {
+      console.log('User has WhatsApp connected in DB but no active connection, attempting restore...');
+      try {
+        // Try to restore the connection
+        const restoreResult = await whatsappService.restoreUserConnection(userId);
+        if (restoreResult) {
+          console.log('Connection restoration initiated for user:', userId);
+          // Return status indicating restoration is in progress
+          return res.json({
+            success: true,
+            data: {
+              isConnected: false,
+              state: 'restoring',
+              qr: null
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Error restoring connection:', error);
+        // Update database if restoration fails
+        await User.findByIdAndUpdate(userId, { whatsappConnected: false });
+      }
+    }
 
     // If we have an active connection attempt, don't override it with stale status
     if (status.state === 'connecting' && qr) {
@@ -108,7 +118,7 @@ router.get('/status', authenticate, async (req: Request, res: Response) => {
       });
     }
 
-    // Update user's connection status in database
+    // Update user's connection status in database if there's a mismatch
     if (status.isConnected !== user.whatsappConnected) {
       await User.findByIdAndUpdate(userId, { 
         whatsappConnected: status.isConnected 
@@ -193,6 +203,44 @@ router.get('/qr', authenticate, async (req: Request, res: Response) => {
   }
 });
 
+// @route   POST /api/whatsapp/test-status
+// @desc    Test WebSocket status update
+// @access  Private
+router.post('/test-status', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const userId = user._id.toString();
+    
+    // Get the Socket.IO instance
+    const io = req.app.get('io');
+    
+    if (io) {
+      // Emit a test status update
+      io.to(`user-${userId}`).emit('whatsapp-status-update', {
+        isConnected: true,
+        state: 'open',
+        qr: null
+      });
+      
+      res.json({
+        success: true,
+        message: 'Test status update sent via WebSocket'
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: 'Socket.IO not available'
+      });
+    }
+  } catch (error) {
+    console.error('Test status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
 // @route   POST /api/whatsapp/disconnect
 // @desc    Disconnect WhatsApp account
 // @access  Private
@@ -210,6 +258,27 @@ router.post('/disconnect', authenticate, async (req: Request, res: Response) => 
         whatsappSessionId: null
       });
 
+      // Emit real-time disconnect status update
+      const io = req.app.get('io');
+      if (io) {
+        console.log('📡 Emitting manual disconnect status update for user:', userId);
+        io.to(`user-${userId}`).emit('whatsapp-status-update', {
+          isConnected: false,
+          state: 'disconnected',
+          qr: null
+        });
+        
+        // Also emit a follow-up update
+        setTimeout(() => {
+          console.log('📡 Sending follow-up manual disconnect status update for user:', userId);
+          io.to(`user-${userId}`).emit('whatsapp-status-update', {
+            isConnected: false,
+            state: 'disconnected',
+            qr: null
+          });
+        }, 100);
+      }
+
       res.json({
         success: true,
         message: 'WhatsApp disconnected successfully'
@@ -226,6 +295,38 @@ router.post('/disconnect', authenticate, async (req: Request, res: Response) => 
     res.status(500).json({
       success: false,
       message: 'Internal server error during disconnection'
+    });
+  }
+});
+
+// @route   GET /api/whatsapp/debug
+// @desc    Get debug information about WhatsApp connections
+// @access  Private
+router.get('/debug', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const userId = user._id.toString();
+
+    const connectionInfo = whatsappService.getConnectionInfo(userId);
+    const hasSession = whatsappService.hasExistingSession(userId);
+    const activeConnections = whatsappService.getActiveConnectionsCount();
+
+    res.json({
+      success: true,
+      data: {
+        userId,
+        userWhatsappConnected: user.whatsappConnected,
+        connectionInfo,
+        hasSession,
+        activeConnections,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Debug info error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 });

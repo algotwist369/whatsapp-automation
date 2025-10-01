@@ -5,6 +5,8 @@ export interface IContact extends Document {
   name: string;
   phone: string;
   email?: string;
+  category?: string; // Contact category for personalization
+  tags?: string[]; // Tags for better segmentation
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -42,6 +44,18 @@ const ContactSchema = new Schema<IContact>({
     trim: true,
     match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email']
   },
+  category: {
+    type: String,
+    trim: true,
+    default: 'general',
+    enum: ['general', 'vip', 'customer', 'lead', 'partner', 'other'],
+    index: true
+  },
+  tags: [{
+    type: String,
+    trim: true,
+    lowercase: true
+  }],
   isActive: {
     type: Boolean,
     default: true

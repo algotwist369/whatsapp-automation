@@ -2,296 +2,538 @@ import OpenAI from 'openai';
 import { ChatOpenAI } from '@langchain/openai';
 import { PromptTemplate } from '@langchain/core/prompts';
 import dotenv from 'dotenv';
+import { 
+  SPAM_WORDS, 
+  PROFESSIONAL_ALTERNATIVES, 
+  calculateSpamScore, 
+  getRiskLevel, 
+  isSafeToSend 
+} from '../config/spam-words';
 dotenv.config();
 
 interface SpamAnalysisResult {
   isSpam: boolean;
   spamWords: string[];
-  replacements: Array<{
+  rewrittenMessage: string;
+  confidence: number;
+  complianceScore: number;
+  riskLevel?: 'safe' | 'low' | 'medium' | 'high' | 'critical';
+  spamScore?: number;
+  replacements?: Array<{
     original: string;
     replacement: string;
     reason: string;
   }>;
-  rewrittenMessage: string;
-  confidence: number;
 }
 
-interface MessageVariation {
-  originalMessage: string;
-  variation: string;
-  variationIndex: number;
+interface BulkMessageResult {
+  contactName: string;
+  personalizedMessage: string;
+  delaySeconds: number;
+  isSpamFree: boolean;
+  complianceScore: number;
+  contactIndex: number;
+  category?: string;
 }
+
+interface UserSettings {
+  messageDelay?: number;
+  maxRetries?: number;
+  autoRetry?: boolean;
+}
+
+// Category-based message templates for better personalization
+const CATEGORY_TEMPLATES: { [key: string]: string } = {
+  promotional: 'Create a friendly promotional message that highlights value without being pushy',
+  notification: 'Create a clear and informative notification message that provides important updates',
+  advertising: 'Create a professional advertising message that focuses on benefits and value proposition',
+  discount_offer: 'Create an appealing discount offer message that emphasizes value without using aggressive sales language',
+  information: 'Create an informative message that educates and provides helpful information',
+  other: 'Create a professional and personalized message that sounds natural and conversational'
+};
 
 class AIService {
   private openai: OpenAI;
   private llm: ChatOpenAI;
   private spamDetectionPrompt!: PromptTemplate;
-  private rewritingPrompt!: PromptTemplate;
-  private variationPrompt!: PromptTemplate;
-  private cache: Map<string, any> = new Map(); // Simple in-memory cache
-
-  // WhatsApp Business Policy prohibited words and phrases
-  private readonly SPAM_INDICATORS = [
-    'urgent', 'limited time', 'act now', 'don\'t miss out', 'exclusive offer',
-    'click here', 'buy now', 'free money', 'guaranteed', 'no obligation',
-    'risk-free', 'instant approval', 'make money', 'earn cash', 'work from home',
-    'lose weight', 'miracle cure', 'secret formula', 'hidden secret',
-    'what are you waiting for', 'grab the offer', 'hurry up', 'last chance'
-  ];
+  private bulkMessagingPrompt!: PromptTemplate;
+  private categoryPrompts!: Map<string, PromptTemplate>;
+  private cache: Map<string, any> = new Map();
+  private cacheExpiry: Map<string, number> = new Map();
+  private readonly CACHE_TTL = 3600000; // 1 hour cache expiry
 
   constructor() {
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error('OpenAI API key is required');
+    if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'sk-your-openai-api-key-here') {
+      console.warn('⚠️  OpenAI API key not configured. AI features will be disabled.');
+      return;
     }
 
-    this.openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-      timeout: 10000, // 10 second timeout
-      maxRetries: 2,
-    });
+    try {
+      this.openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+        timeout: 30000, // Increased timeout for better reliability
+        maxRetries: 3, // Increased retries for production
+      });
 
-    this.llm = new ChatOpenAI({
-      openAIApiKey: process.env.OPENAI_API_KEY,
-      modelName: 'gpt-3.5-turbo', // Faster model for better performance
-      temperature: 0.3, // Lower temperature for more consistent results
-      maxTokens: 500, // Limit response length for speed
-      timeout: 8000, // 8 second timeout
-    });
+      this.llm = new ChatOpenAI({
+        openAIApiKey: process.env.OPENAI_API_KEY,
+        modelName: 'gpt-3.5-turbo',
+        temperature: 0.7, // Increased for more natural variations
+        maxTokens: 500, // Increased for better content generation
+        timeout: 30000, // Increased timeout
+      });
 
-    this.initializePrompts();
+      this.initializePrompts();
+      this.initializeCategoryPrompts();
+      this.startCacheCleanup();
+      console.log('✅ AI service initialized with enhanced spam detection');
+    } catch (error: any) {
+      console.error('❌ Failed to initialize AI service:', error.message);
+    }
+  }
+
+  // Start periodic cache cleanup to prevent memory leaks
+  private startCacheCleanup(): void {
+    setInterval(() => {
+      const now = Date.now();
+      for (const [key, expiry] of this.cacheExpiry.entries()) {
+        if (expiry < now) {
+          this.cache.delete(key);
+          this.cacheExpiry.delete(key);
+        }
+      }
+    }, 600000); // Clean up every 10 minutes
   }
 
   private initializePrompts(): void {
-    // Spam detection prompt
     this.spamDetectionPrompt = new PromptTemplate({
-      template: `
-You are an expert in WhatsApp Business Policy compliance. Analyze the following message for spam indicators and policy violations.
+      template: `You are an expert at detecting spam and rewriting messages for WhatsApp Business compliance.
+
+Analyze this message and provide a comprehensive spam analysis in JSON format.
 
 Message: "{message}"
 Category: "{category}"
 
-Your task:
-1. Identify any words/phrases that might trigger WhatsApp's spam filters
-2. Suggest professional replacements for problematic content
-3. Rewrite the message to be compliant while maintaining the original intent
+CRITICAL RULES:
+1. Identify ALL spam/ban words that could trigger WhatsApp detection
+2. Replace spam words with professional alternatives
+3. Maintain the core message intent and value
+4. Make it sound natural and conversational
+5. Remove urgency/pressure tactics
+6. Avoid superlatives and exaggerations
+7. Keep under 300 characters for mobile optimization
+8. DO NOT use: "urgent", "limited time", "act now", "buy now", "click here", "guaranteed", "free money", "congratulations", "winner", "amazing", "incredible"
 
-Spam indicators to watch for:
-- Urgency tactics ("urgent", "limited time", "act now")
-- Promotional language ("exclusive offer", "don't miss out")
-- Call-to-action phrases ("click here", "buy now")
-- False claims ("guaranteed", "risk-free")
-- Misleading content
-
-Respond in JSON format:
-{{
+Return ONLY valid JSON in this exact format:
+{
   "isSpam": boolean,
   "spamWords": ["word1", "word2"],
+  "rewrittenMessage": "professionally rewritten version",
+  "confidence": 0.95,
+  "complianceScore": 88,
   "replacements": [
-    {{
-      "original": "problematic word",
-      "replacement": "professional alternative",
-      "reason": "why this change is needed"
-    }}
-  ],
-  "rewrittenMessage": "professional version of the message",
-  "confidence": 0.85
-}}
-
-Make the rewritten message sound natural, professional, and human-like while preserving the core message and call-to-action.
-`,
+    {"original": "urgent", "replacement": "important", "reason": "Less aggressive"}
+  ]
+}`,
       inputVariables: ['message', 'category'],
     });
 
-    // Message rewriting prompt
-    this.rewritingPrompt = new PromptTemplate({
-      template: `
-Rewrite the following message to be professional, engaging, and compliant with WhatsApp Business Policy.
+    this.bulkMessagingPrompt = new PromptTemplate({
+      template: `Create a UNIQUE, natural WhatsApp message for personalized bulk messaging.
 
-Original Message: "{originalMessage}"
-Category: "{category}"
-Detected Issues: "{issues}"
-
-Requirements:
-1. Maintain the original intent and call-to-action
-2. Use professional, conversational tone
-3. Avoid spammy language and urgency tactics
-4. Make it sound like a genuine business message
-5. Keep it under 200 words
-6. Use proper grammar and punctuation
-
-Output only the rewritten message, nothing else.
-`,
-      inputVariables: ['originalMessage', 'category', 'issues'],
-    });
-
-    // Message variation prompt
-    this.variationPrompt = new PromptTemplate({
-      template: `
-Create a slight variation of this message for bulk messaging. The variation should be semantically equivalent but use different wording to avoid detection.
-
-Original Message: "{message}"
+Base Message: "{baseMessage}"
+Contact Name: "{contactName}"
+Message Category: "{category}"
 Variation Number: {variationIndex}
 
-Requirements:
-1. Keep the same meaning and intent
-2. Use different words and sentence structure
-3. Maintain professional tone
-4. Keep similar length
-5. Preserve any important details (numbers, names, etc.)
+CRITICAL REQUIREMENTS:
+1. Each message MUST be completely different from the base message
+2. Use the contact name naturally (max 2 times)
+3. Maintain professional, conversational tone
+4. Keep message under 280 characters (optimal for mobile)
+5. NO spam words: avoid "urgent", "limited", "special offer", "click", "guaranteed"
+6. NO generic greetings like "Dear Sir/Madam"
+7. NO formal closings like "Best regards", "Sincerely"
+8. Sound like a personal message from a real person
+9. Use category context to personalize (promotional/informational/notification)
+10. Add value and be helpful, not pushy
 
-Output only the variation, nothing else.
-`,
-      inputVariables: ['message', 'variationIndex'],
+Generate a message that sounds genuinely personal and professional.
+Output ONLY the message text, nothing else.`,
+      inputVariables: ['baseMessage', 'contactName', 'category', 'variationIndex'],
     });
   }
 
-  async analyzeMessage(message: string, category: string, settings?: any): Promise<SpamAnalysisResult> {
+  // Initialize category-specific prompts for better personalization
+  private initializeCategoryPrompts(): void {
+    this.categoryPrompts = new Map();
+
+    for (const [category, template] of Object.entries(CATEGORY_TEMPLATES)) {
+      this.categoryPrompts.set(category, new PromptTemplate({
+        template: `${template}
+
+Base Message: "{baseMessage}"
+Contact Name: "{contactName}"
+Variation: {variationIndex}
+
+Requirements:
+- Personalized for {contactName}
+- Category: ${category}
+- Natural and conversational
+- Under 280 characters
+- No spam words
+- Professional tone
+- Unique variation #{variationIndex}
+
+Output only the personalized message.`,
+        inputVariables: ['baseMessage', 'contactName', 'variationIndex'],
+      }));
+    }
+  }
+
+  async analyzeMessage(message: string, category: string): Promise<SpamAnalysisResult> {
     try {
-      // Check cache first
-      const cacheKey = `analysis_${Buffer.from(message).toString('base64')}_${category}`;
-      if (this.cache.has(cacheKey)) {
-        console.log('Using cached AI analysis result');
-        return this.cache.get(cacheKey);
-      }
+      // First, use local comprehensive spam detection
+      const localAnalysis = calculateSpamScore(message);
+      const riskLevel = getRiskLevel(localAnalysis.score);
+      const isSafe = isSafeToSend(localAnalysis.score);
 
-      // First, do a quick local check for obvious spam indicators
-      const localSpamWords = this.detectSpamWordsLocally(message);
-      
-      // Use OpenAI for comprehensive analysis
-      const prompt = await this.spamDetectionPrompt.format({
-        message,
-        category,
-      });
+      console.log(`📊 Spam Analysis - Score: ${localAnalysis.score}, Risk: ${riskLevel}, Safe: ${isSafe}`);
 
-      const response = await this.llm.invoke(prompt);
-      const content = response.content as string;
-
-      let analysis: SpamAnalysisResult;
-      try {
-        analysis = JSON.parse(content);
-      } catch (parseError) {
-        // Fallback if JSON parsing fails
-        analysis = {
-          isSpam: localSpamWords.length > 0,
-          spamWords: localSpamWords,
-          replacements: [],
-          rewrittenMessage: message,
-          confidence: 0.5,
+      // If message has critical risk, rewrite it locally
+      if (localAnalysis.score >= 80) {
+        console.log('⚠️ Critical spam score detected, applying local cleanup');
+        const cleanedMessage = this.localSpamCleanup(message, localAnalysis.detectedWords);
+        return {
+          isSpam: true,
+          spamWords: localAnalysis.detectedWords,
+          rewrittenMessage: cleanedMessage,
+          confidence: 0.95,
+          complianceScore: Math.max(20, 100 - localAnalysis.score),
+          riskLevel,
+          spamScore: localAnalysis.score,
+          replacements: this.generateReplacements(localAnalysis.detectedWords)
         };
       }
 
-      // Merge local detection with AI analysis
-      analysis.spamWords = [...new Set([...analysis.spamWords, ...localSpamWords])];
-      analysis.isSpam = analysis.spamWords.length > 0 || analysis.confidence > 0.7;
+      // Check cache with expiry
+      const cacheKey = `analysis_${Buffer.from(message).toString('base64').substring(0, 50)}_${category}`;
+      if (this.cache.has(cacheKey)) {
+        const expiry = this.cacheExpiry.get(cacheKey);
+        if (expiry && expiry > Date.now()) {
+          console.log('📦 Using cached spam analysis');
+          return this.cache.get(cacheKey);
+        } else {
+          this.cache.delete(cacheKey);
+          this.cacheExpiry.delete(cacheKey);
+        }
+      }
+
+      // Use AI for moderate risk messages if available
+      if (this.llm && this.spamDetectionPrompt && localAnalysis.score < 80) {
+        try {
+          const prompt = await this.spamDetectionPrompt.format({ message, category });
+          const response = await this.llm.invoke(prompt);
+          const content = response.content as string;
+
+          // Parse AI response
+          let aiAnalysis: any;
+          try {
+            // Extract JSON from response (handle cases where AI adds extra text)
+            const jsonMatch = content.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              aiAnalysis = JSON.parse(jsonMatch[0]);
+            } else {
+              throw new Error('No JSON found in response');
+            }
+          } catch (parseError) {
+            console.warn('Failed to parse AI response, using local analysis');
+            aiAnalysis = null;
+          }
+
+          // Combine local and AI analysis
+          if (aiAnalysis) {
+            const combinedAnalysis: SpamAnalysisResult = {
+              isSpam: localAnalysis.score > 40 || aiAnalysis.isSpam,
+              spamWords: [...new Set([...localAnalysis.detectedWords, ...(aiAnalysis.spamWords || [])])],
+              rewrittenMessage: aiAnalysis.rewrittenMessage || message,
+              confidence: Math.max(localAnalysis.score / 100, aiAnalysis.confidence || 0.5),
+              complianceScore: Math.min(aiAnalysis.complianceScore || 50, 100 - localAnalysis.score),
+              riskLevel,
+              spamScore: localAnalysis.score,
+              replacements: aiAnalysis.replacements || this.generateReplacements(localAnalysis.detectedWords)
+            };
+
+            // Cache the result
+            this.cache.set(cacheKey, combinedAnalysis);
+            this.cacheExpiry.set(cacheKey, Date.now() + this.CACHE_TTL);
+
+            return combinedAnalysis;
+          }
+        } catch (aiError) {
+          console.warn('AI analysis failed, falling back to local analysis:', aiError);
+        }
+      }
+
+      // Fallback to local analysis
+      const cleanedMessage = localAnalysis.score > 40 
+        ? this.localSpamCleanup(message, localAnalysis.detectedWords) 
+        : message;
+
+      const finalAnalysis: SpamAnalysisResult = {
+        isSpam: localAnalysis.score > 40,
+        spamWords: localAnalysis.detectedWords,
+        rewrittenMessage: cleanedMessage,
+        confidence: localAnalysis.score / 100,
+        complianceScore: Math.max(20, 100 - localAnalysis.score),
+        riskLevel,
+        spamScore: localAnalysis.score,
+        replacements: this.generateReplacements(localAnalysis.detectedWords)
+      };
 
       // Cache the result
-      this.cache.set(cacheKey, analysis);
-      
-      return analysis;
+      this.cache.set(cacheKey, finalAnalysis);
+      this.cacheExpiry.set(cacheKey, Date.now() + this.CACHE_TTL);
+
+      return finalAnalysis;
+
     } catch (error) {
-      console.error('Error in AI analysis:', error);
+      console.error('Error in comprehensive spam analysis:', error);
       
-      // Fallback to local detection
-      const spamWords = this.detectSpamWordsLocally(message);
+      // Emergency fallback
+      const localAnalysis = calculateSpamScore(message);
       return {
-        isSpam: spamWords.length > 0,
-        spamWords,
-        replacements: [],
-        rewrittenMessage: message,
-        confidence: spamWords.length > 0 ? 0.8 : 0.2,
+        isSpam: localAnalysis.score > 40,
+        spamWords: localAnalysis.detectedWords,
+        rewrittenMessage: this.localSpamCleanup(message, localAnalysis.detectedWords),
+        confidence: localAnalysis.score / 100,
+        complianceScore: Math.max(20, 100 - localAnalysis.score),
+        riskLevel: getRiskLevel(localAnalysis.score),
+        spamScore: localAnalysis.score,
+        replacements: this.generateReplacements(localAnalysis.detectedWords)
       };
     }
   }
 
-  private detectSpamWordsLocally(message: string): string[] {
-    const lowerMessage = message.toLowerCase();
-    return this.SPAM_INDICATORS.filter(indicator => 
-      lowerMessage.includes(indicator.toLowerCase())
-    );
-  }
-
-  async rewriteMessage(originalMessage: string, category: string, issues: string): Promise<string> {
-    try {
-      const prompt = await this.rewritingPrompt.format({
-        originalMessage,
-        category,
-        issues,
-      });
-
-      const response = await this.llm.invoke(prompt);
-      return response.content as string;
-    } catch (error) {
-      console.error('Error rewriting message:', error);
-      return originalMessage; // Fallback to original
-    }
-  }
-
-  async generateMessageVariations(message: string, count: number): Promise<MessageVariation[]> {
-    const variations: MessageVariation[] = [];
+  // Local spam cleanup without AI
+  private localSpamCleanup(message: string, spamWords: string[]): string {
+    let cleaned = message;
     
+    // Replace spam words with professional alternatives
+    for (const spamWord of spamWords) {
+      const alternatives = PROFESSIONAL_ALTERNATIVES[spamWord.toLowerCase()];
+      if (alternatives && alternatives.length > 0) {
+        const replacement = alternatives[0];
+        const regex = new RegExp(spamWord, 'gi');
+        cleaned = cleaned.replace(regex, replacement);
+      }
+    }
+
+    // Remove excessive exclamation marks (keep max 1)
+    cleaned = cleaned.replace(/!{2,}/g, '!');
+    cleaned = cleaned.replace(/\s!+\s/g, '. ');
+
+    // Fix excessive caps (convert to sentence case)
+    if ((cleaned.match(/[A-Z]/g) || []).length > cleaned.length * 0.3) {
+      cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1).toLowerCase();
+    }
+
+    // Remove excessive emojis (keep max 3)
+    const emojiRegex = /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu;
+    const emojis = cleaned.match(emojiRegex) || [];
+    if (emojis.length > 3) {
+      cleaned = cleaned.replace(emojiRegex, '');
+    }
+
+    return cleaned.trim();
+  }
+
+  // Generate replacement suggestions
+  private generateReplacements(spamWords: string[]): Array<{original: string; replacement: string; reason: string}> {
+    const replacements: Array<{original: string; replacement: string; reason: string}> = [];
+    
+    for (const word of spamWords) {
+      const alternatives = PROFESSIONAL_ALTERNATIVES[word.toLowerCase()];
+      if (alternatives && alternatives.length > 0) {
+        replacements.push({
+          original: word,
+          replacement: alternatives[0],
+          reason: 'Professional alternative to avoid spam detection'
+        });
+      }
+    }
+
+    return replacements;
+  }
+
+  async generateBulkMessages(
+    baseMessage: string,
+    contacts: Array<{ name: string, phone: string }>,
+    delayBetweenMessages: number = 30
+  ): Promise<BulkMessageResult[]> {
+    const results: BulkMessageResult[] = [];
+
     try {
-      for (let i = 1; i <= count; i++) {
-        const prompt = await this.variationPrompt.format({
-          message,
-          variationIndex: i,
+      for (let i = 0; i < contacts.length; i++) {
+        const contact = contacts[i];
+        const variationIndex = (i % 10) + 1;
+        const delaySeconds = i * delayBetweenMessages;
+
+        const personalizedMessage = await this.generatePersonalizedMessage(
+          baseMessage,
+          contact.name,
+          variationIndex
+        );
+
+        const spamAnalysis = await this.analyzeMessage(personalizedMessage, 'bulk');
+
+        results.push({
+          contactName: contact.name,
+          personalizedMessage: spamAnalysis.rewrittenMessage,
+          delaySeconds,
+          isSpamFree: !spamAnalysis.isSpam && spamAnalysis.complianceScore > 80,
+          complianceScore: spamAnalysis.complianceScore,
+          contactIndex: i
         });
 
-        const response = await this.llm.invoke(prompt);
-        const variation = response.content as string;
-
-        variations.push({
-          originalMessage: message,
-          variation: variation.trim(),
-          variationIndex: i,
-        });
-
-        // Add small delay to avoid rate limiting
-        if (i < count) {
-          await new Promise(resolve => setTimeout(resolve, 100));
+        if (i < contacts.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 50));
         }
       }
     } catch (error) {
-      console.error('Error generating variations:', error);
-      // Fallback: return original message for all variations
-      for (let i = 1; i <= count; i++) {
-        variations.push({
-          originalMessage: message,
-          variation: message,
-          variationIndex: i,
-        });
-      }
+      console.error('Error generating bulk messages:', error);
     }
 
-    return variations;
+    return results;
   }
 
-  async generateUniqueMessageForContact(
-    baseMessage: string, 
-    contactName: string, 
-    variationIndex: number
+  async generatePersonalizedMessage(
+    baseMessage: string,
+    contactName: string,
+    variationIndex: number,
+    category: string = 'other'
   ): Promise<string> {
     try {
-      const prompt = `Create a personalized version of this message for ${contactName}.
+      if (!this.llm || !this.bulkMessagingPrompt) {
+        // Fallback: simple personalization
+        return this.simplePersonalization(baseMessage, contactName, variationIndex);
+      }
 
-Base Message: "${baseMessage}"
-Variation Style: ${variationIndex}
+      // Use category-specific prompt if available
+      const promptTemplate = this.categoryPrompts?.get(category) || this.bulkMessagingPrompt;
 
-Requirements:
-1. Include the contact's name naturally
-2. Keep the same core message and call-to-action
-3. Make it sound personal and genuine
-4. Use professional, friendly tone
-5. Keep under 200 words
-
-Output only the personalized message.`;
+      const prompt = await promptTemplate.format({
+        baseMessage,
+        contactName,
+        variationIndex,
+        category
+      });
 
       const response = await this.llm.invoke(prompt);
-      return response.content as string;
+      let message = response.content as string;
+
+      // Clean up the message
+      message = this.cleanupGeneratedMessage(message, contactName);
+
+      // Ensure it's not too similar to base message
+      if (this.calculateSimilarity(message, baseMessage) > 0.8) {
+        console.log('⚠️ Generated message too similar to base, applying variation');
+        message = this.applyVariation(message, variationIndex);
+      }
+
+      return message;
     } catch (error) {
       console.error('Error generating personalized message:', error);
-      // Fallback: simple personalization
-      return `Hi ${contactName}, ${baseMessage}`;
+      return this.simplePersonalization(baseMessage, contactName, variationIndex);
     }
+  }
+
+  // Simple personalization without AI
+  private simplePersonalization(baseMessage: string, contactName: string, variationIndex: number): string {
+    const greetings = [
+      `Hi ${contactName}`, 
+      `Hello ${contactName}`, 
+      `Hey ${contactName}`,
+      `Good day ${contactName}`,
+      `${contactName}`,
+      `Hi there ${contactName}`
+    ];
+
+    const connectors = [
+      ', hope you\'re doing well. ',
+      ', wanted to reach out to you. ',
+      ', I thought you\'d find this interesting. ',
+      ', ',
+      '! ',
+      ', hope this finds you well. '
+    ];
+
+    const greeting = greetings[variationIndex % greetings.length];
+    const connector = connectors[variationIndex % connectors.length];
+
+    return `${greeting}${connector}${baseMessage}`;
+  }
+
+  // Clean up AI-generated messages
+  private cleanupGeneratedMessage(message: string, contactName: string): string {
+    let cleaned = message;
+
+    // Remove common AI artifacts
+    cleaned = cleaned
+      .replace(/\s*(Best regards|Thanks|Thank you|Regards|Sincerely|Warm regards|Kind regards)[\s\S]*$/gi, '')
+      .replace(/\s*\[.*?\]\s*$/g, '')
+      .replace(/^["']|["']$/g, '') // Remove surrounding quotes
+      .replace(/^\s*-\s*/gm, '') // Remove leading dashes
+      .trim();
+
+    // Ensure contact name is used (but not excessively)
+    const nameCount = (cleaned.match(new RegExp(contactName, 'gi')) || []).length;
+    if (nameCount === 0) {
+      cleaned = `Hi ${contactName}, ${cleaned}`;
+    } else if (nameCount > 3) {
+      // Too many name mentions, remove excess
+      let count = 0;
+      cleaned = cleaned.replace(new RegExp(contactName, 'gi'), (match) => {
+        count++;
+        return count <= 2 ? match : '';
+      });
+    }
+
+    // Limit message length for WhatsApp (recommended max 1000 chars)
+    if (cleaned.length > 1000) {
+      cleaned = cleaned.substring(0, 997) + '...';
+    }
+
+    return cleaned;
+  }
+
+  // Calculate message similarity
+  private calculateSimilarity(message1: string, message2: string): number {
+    const words1 = message1.toLowerCase().split(/\s+/);
+    const words2 = message2.toLowerCase().split(/\s+/);
+    
+    const set1 = new Set(words1);
+    const set2 = new Set(words2);
+    
+    const intersection = new Set([...set1].filter(x => set2.has(x)));
+    const union = new Set([...set1, ...set2]);
+    
+    return intersection.size / union.size;
+  }
+
+  // Apply variation to make message more unique
+  private applyVariation(message: string, variationIndex: number): string {
+    // Apply different sentence structures based on variation index
+    const variations = [
+      (msg: string) => msg, // Original
+      (msg: string) => msg.replace(/\. /g, '. By the way, '),
+      (msg: string) => msg.replace(/^/, 'Just wanted to mention that '),
+      (msg: string) => msg.replace(/\?/g, '? I\'d love to know your thoughts.'),
+      (msg: string) => msg + ' Let me know what you think!'
+    ];
+
+    const variationFunc = variations[variationIndex % variations.length];
+    return variationFunc(message);
   }
 }
 

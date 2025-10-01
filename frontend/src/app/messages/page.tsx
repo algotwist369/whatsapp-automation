@@ -9,6 +9,8 @@ import { useSettingsStore } from '@/store/settingsStore';
 import { messagesApi, contactsApi, whatsappApi } from '@/lib/api';
 import { BulkMessageFormData, SpamAnalysis, Contact, MessageCategory } from '@/types';
 import toast from 'react-hot-toast';
+import { SelectField, TextAreaField } from '@/components/common';
+import { BanPreventionWarning } from '@/components/messages/BanPreventionWarning';
 import {
   CheckCircleIcon,
   ExclamationTriangleIcon,
@@ -48,8 +50,6 @@ export default function MessagesPage() {
     },
   });
 
-  const message = watch('message');
-  const category = watch('category');
 
   useEffect(() => {
     fetchContacts();
@@ -174,16 +174,6 @@ export default function MessagesPage() {
     }
   };
 
-  const handleMessageChange = (value: string) => {
-    setValue('message', value);
-    if (value.trim() && category) {
-      // Debounce the analysis
-      const timeoutId = setTimeout(() => {
-        analyzeMessage(value, category);
-      }, 1000);
-      return () => clearTimeout(timeoutId);
-    }
-  };
 
   const handleSelectAll = () => {
     if (selectedContacts.length === contacts.length) {
@@ -218,11 +208,14 @@ export default function MessagesPage() {
 
     setIsSending(true);
     try {
-      const response = await messagesApi.sendBulkMessage({
+      // Send bulk message data (settings are handled on backend via user profile)
+      const bulkMessageData: BulkMessageFormData = {
         message: data.message,
         category: data.category,
-        selectedContacts: data.selectedContacts,
-      });
+        selectedContacts: data.selectedContacts
+      };
+
+      const response = await messagesApi.sendBulkMessage(bulkMessageData);
 
       if (response.success && response.data) {
         toast.success(`Bulk message started for ${response.data.totalContacts} contacts`);
@@ -254,12 +247,30 @@ export default function MessagesPage() {
     { value: 'other', label: 'Other' },
   ];
 
+  // Helper function to calculate campaign duration
+  const calculateCampaignDuration = (contactCount: number, delaySeconds: number) => {
+    const totalSeconds = (contactCount - 1) * delaySeconds;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    
+    if (minutes === 0) {
+      return `${seconds} seconds`;
+    } else if (seconds === 0) {
+      return `${minutes} minute${minutes !== 1 ? 's' : ''}`;
+    } else {
+      return `${minutes} minute${minutes !== 1 ? 's' : ''} ${seconds} seconds`;
+    }
+  };
+
   return (
     <DashboardLayout 
       title="Bulk Messages" 
       subtitle="Send AI-optimized messages to multiple contacts"
     >
       <div className="space-y-6">
+        {/* Ban Prevention Warning */}
+        <BanPreventionWarning />
+
         {/* WhatsApp Connection Alert */}
         {!isConnected && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
@@ -321,57 +332,49 @@ export default function MessagesPage() {
               <div className="card-body">
                 <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
                   {/* Category Selection */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Message Category
-                    </label>
-                    <select
-                      {...register('category', { required: 'Category is required' })}
-                      className="input"
-                    >
-                      {categories.map(cat => (
-                        <option key={cat.value} value={cat.value}>
-                          {cat.label}
-                        </option>
-                      ))}
-                    </select>
-                    {errors.category && (
-                      <p className="mt-1 text-sm text-red-600">{errors.category.message}</p>
-                    )}
-                  </div>
+                  <SelectField
+                    label="Message Category"
+                    options={categories}
+                    register={register('category', { required: 'Category is required' })}
+                    error={errors.category?.message}
+                    required
+                  />
 
                   {/* Message Text */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Message Content
-                    </label>
-                    <textarea
-                      {...register('message', {
-                        required: 'Message is required',
-                        maxLength: {
-                          value: 4096,
-                          message: 'Message cannot exceed 4096 characters',
-                        },
-                      })}
-                      rows={6}
-                      className={`input ${errors.message ? 'input-error' : ''}`}
-                      placeholder="Type your message here..."
-                      onChange={(e) => handleMessageChange(e.target.value)}
-                    />
-                    {errors.message && (
-                      <p className="mt-1 text-sm text-red-600">{errors.message.message}</p>
-                    )}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Message Content
+                        <span className="text-red-500 ml-1">*</span>
+                      </label>
+                      <textarea
+                        {...register('message', {
+                          required: 'Message is required',
+                          maxLength: {
+                            value: 4096,
+                            message: 'Message cannot exceed 4096 characters',
+                          },
+                        })}
+                        placeholder="Type your message here..."
+                        rows={6}
+                        className="block w-full border rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-primary-500 focus:border-primary-500 border-gray-300"
+                        required
+                      />
+                      {errors.message?.message && (
+                        <p className="mt-1 text-sm text-red-600">{errors.message.message}</p>
+                      )}
+                    </div>
                     <p className="mt-1 text-sm text-gray-500">
-                      {message.length}/4096 characters
+                      {watch('message')?.length || 0}/4096 characters
                     </p>
                   </div>
 
                   {/* AI Analysis Button */}
-                  {message && (
+                  {watch('message') && (
                     <div className="flex items-center space-x-2">
                       <button
                         type="button"
-                        onClick={() => analyzeMessage(message, category)}
+                        onClick={() => analyzeMessage(watch('message'), watch('category'))}
                         disabled={isAnalyzing}
                         className="btn btn-secondary btn-sm"
                       >
@@ -387,6 +390,23 @@ export default function MessagesPage() {
                           </>
                         )}
                       </button>
+                    </div>
+                  )}
+
+                  {/* Delay Information */}
+                  {selectedContacts.length > 0 && settings && (
+                    <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                      <div className="flex items-center space-x-2">
+                        <ExclamationTriangleIcon className="h-4 w-4 text-yellow-600" />
+                        <span className="text-sm font-medium text-yellow-800">Campaign Duration</span>
+                      </div>
+                      <p className="text-sm text-yellow-700 mt-1">
+                        {selectedContacts.length} contacts × {settings.messageDelay || 60}s delay = 
+                        <span className="font-medium"> {calculateCampaignDuration(selectedContacts.length, settings.messageDelay || 60)}</span>
+                      </p>
+                      <p className="text-xs text-yellow-600 mt-1">
+                        First message: immediate, Last message: {calculateCampaignDuration(selectedContacts.length, settings.messageDelay || 60)}
+                      </p>
                     </div>
                   )}
 
@@ -424,7 +444,7 @@ export default function MessagesPage() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                 <div>
                   <span className="text-gray-500">Message Delay:</span>
-                  <span className="ml-2 font-medium">{settings.messageDelay || 2}s</span>
+                  <span className="ml-2 font-medium">{settings.messageDelay || 60}s</span>
                 </div>
                 <div>
                   <span className="text-gray-500">Max Retries:</span>
@@ -435,9 +455,17 @@ export default function MessagesPage() {
                   <span className="ml-2 font-medium">{settings.aiEnabled ? 'Yes' : 'No'}</span>
                 </div>
                 <div>
-                  <span className="text-gray-500">Auto Reconnect:</span>
-                  <span className="ml-2 font-medium">{settings.autoReconnect ? 'Yes' : 'No'}</span>
+                  <span className="text-gray-500">Auto Retry:</span>
+                  <span className="ml-2 font-medium">{settings.autoRetry ? 'Yes' : 'No'}</span>
                 </div>
+              </div>
+              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                <p className="text-sm text-blue-800">
+                  <strong>Delay Info:</strong> Messages will be sent with a {settings.messageDelay || 60}-second delay between each contact to prevent spam detection.
+                </p>
+                <p className="text-xs text-blue-600 mt-1">
+                  You can change this setting in <a href="/settings" className="underline hover:text-blue-800">Settings → Message Settings</a>
+                </p>
               </div>
             </div>
           </div>
@@ -512,9 +540,9 @@ export default function MessagesPage() {
                 </div>
                 <div className="card-body">
                   <div className="space-y-4">
-                    {/* Spam Detection */}
+                    {/* Spam Detection with Risk Level */}
                     <div>
-                      <div className="flex items-center space-x-2 mb-2">
+                      <div className="flex items-center justify-between mb-2">
                         <span className="text-sm font-medium text-gray-700">Spam Detection:</span>
                         {analysis.isSpam ? (
                           <span className="badge badge-warning">Potential Spam</span>
@@ -522,13 +550,101 @@ export default function MessagesPage() {
                           <span className="badge badge-success">Clean</span>
                         )}
                       </div>
-                      <p className="text-sm text-gray-500">
+
+                      {/* Spam Score & Risk Level */}
+                      {analysis.spamScore !== undefined && (
+                        <div className="mt-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm font-medium text-gray-700">Spam Score:</span>
+                            <span className={`text-lg font-bold ${
+                              analysis.spamScore < 20 ? 'text-green-600' :
+                              analysis.spamScore < 40 ? 'text-green-500' :
+                              analysis.spamScore < 60 ? 'text-yellow-600' :
+                              analysis.spamScore < 80 ? 'text-orange-600' :
+                              'text-red-600'
+                            }`}>
+                              {analysis.spamScore}/100
+                            </span>
+                          </div>
+                          
+                          {/* Progress Bar */}
+                          <div className="w-full bg-gray-200 rounded-full h-3">
+                            <div 
+                              className={`h-3 rounded-full transition-all ${
+                                analysis.spamScore < 20 ? 'bg-green-600' :
+                                analysis.spamScore < 40 ? 'bg-green-500' :
+                                analysis.spamScore < 60 ? 'bg-yellow-500' :
+                                analysis.spamScore < 80 ? 'bg-orange-500' :
+                                'bg-red-600'
+                              }`}
+                              style={{ width: `${analysis.spamScore}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Risk Level Badge */}
+                      {analysis.riskLevel && (
+                        <div className="mt-3 p-3 rounded-md border-2 ${
+                          analysis.riskLevel === 'safe' ? 'bg-green-50 border-green-300' :
+                          analysis.riskLevel === 'low' ? 'bg-green-50 border-green-300' :
+                          analysis.riskLevel === 'medium' ? 'bg-yellow-50 border-yellow-300' :
+                          analysis.riskLevel === 'high' ? 'bg-orange-50 border-orange-300' :
+                          'bg-red-50 border-red-300'
+                        }">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-gray-700">Risk Level:</span>
+                            <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+                              analysis.riskLevel === 'safe' ? 'bg-green-200 text-green-900' :
+                              analysis.riskLevel === 'low' ? 'bg-green-200 text-green-900' :
+                              analysis.riskLevel === 'medium' ? 'bg-yellow-200 text-yellow-900' :
+                              analysis.riskLevel === 'high' ? 'bg-orange-200 text-orange-900' :
+                              'bg-red-200 text-red-900'
+                            }`}>
+                              {analysis.riskLevel.toUpperCase()}
+                            </span>
+                          </div>
+                          
+                          {/* Risk Assessment Message */}
+                          <p className="text-xs mt-2 ${
+                            analysis.riskLevel === 'safe' || analysis.riskLevel === 'low' 
+                              ? 'text-green-800' 
+                              : analysis.riskLevel === 'medium' 
+                                ? 'text-yellow-800' 
+                                : 'text-red-800'
+                          }">
+                            {analysis.riskLevel === 'safe' && '✅ Safe to send - No spam concerns detected'}
+                            {analysis.riskLevel === 'low' && '✅ Low risk - Safe to send with minor adjustments'}
+                            {analysis.riskLevel === 'medium' && '⚠️ Medium risk - Review rewritten message before sending'}
+                            {analysis.riskLevel === 'high' && '🚨 High risk - Use rewritten message only'}
+                            {analysis.riskLevel === 'critical' && '🔴 CRITICAL - Do not send! Message will likely cause ban'}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Compliance Score */}
+                      {analysis.complianceScore !== undefined && (
+                        <div className="mt-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-gray-700">WhatsApp Compliance:</span>
+                            <span className={`text-sm font-bold ${
+                              analysis.complianceScore >= 80 ? 'text-green-600' :
+                              analysis.complianceScore >= 60 ? 'text-yellow-600' :
+                              'text-red-600'
+                            }`}>
+                              {analysis.complianceScore}%
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      <p className="text-sm text-gray-500 mt-2">
                         Confidence: {(analysis.confidence * 100).toFixed(1)}%
                       </p>
                     </div>
 
                     {/* Spam Words */}
-                    {analysis.spamWords.length > 0 && (
+                    {analysis.spamWords && analysis.spamWords.length > 0 && (
                       <div>
                         <span className="text-sm font-medium text-gray-700">Detected Issues:</span>
                         <div className="mt-1 flex flex-wrap gap-1">
@@ -542,7 +658,7 @@ export default function MessagesPage() {
                     )}
 
                     {/* Replacements */}
-                    {analysis.replacements.length > 0 && (
+                    {analysis.replacements && analysis.replacements.length > 0 && (
                       <div>
                         <span className="text-sm font-medium text-gray-700">Suggested Replacements:</span>
                         <div className="mt-2 space-y-2">

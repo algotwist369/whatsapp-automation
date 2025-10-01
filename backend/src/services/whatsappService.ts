@@ -18,6 +18,7 @@ class WhatsAppService {
   private readonly sessionPath: string;
   private io: SocketIOServer | null = null;
   private connectionAttempts: Map<string, boolean> = new Map(); // Track connection attempts
+  private isInitialized: boolean = false;
 
   constructor() {
     this.sessionPath = process.env.WHATSAPP_SESSION_PATH || './sessions';
@@ -28,10 +29,165 @@ class WhatsAppService {
     this.io = io;
   }
 
+  // Initialize service and restore existing connections
+  async initialize() {
+    if (this.isInitialized) return;
+    
+    try {
+      console.log('🔄 Initializing WhatsApp service and restoring connections...');
+      await this.restoreExistingConnections();
+      this.isInitialized = true;
+      console.log('✅ WhatsApp service initialized successfully');
+    } catch (error) {
+      console.error('❌ Error initializing WhatsApp service:', error);
+    }
+  }
+
+  // Restore existing connections from database
+  private async restoreExistingConnections() {
+    try {
+      // Import User model dynamically to avoid circular dependencies
+      const { default: User } = await import('../models/User');
+      
+      // Find all users with active WhatsApp connections
+      const connectedUsers = await User.find({ 
+        whatsappConnected: true,
+        isActive: true 
+      }).select('_id whatsappSessionId');
+
+      console.log(`📱 Found ${connectedUsers.length} users with WhatsApp connections to restore`);
+
+      for (const user of connectedUsers) {
+        const userId = user._id.toString();
+        const sessionPath = path.join(this.sessionPath, `session-${userId}`);
+        
+        // Check if session files exist
+        if (fs.existsSync(sessionPath)) {
+          console.log(`🔄 Restoring connection for user: ${userId}`);
+          try {
+            await this.restoreUserConnection(userId);
+          } catch (error) {
+            console.error(`❌ Failed to restore connection for user ${userId}:`, error);
+            // Update user status if restoration fails
+            await User.findByIdAndUpdate(userId, { whatsappConnected: false });
+          }
+        } else {
+          console.log(`⚠️ No session files found for user ${userId}, marking as disconnected`);
+          await User.findByIdAndUpdate(userId, { whatsappConnected: false });
+        }
+      }
+    } catch (error) {
+      console.error('Error restoring connections:', error);
+    }
+  }
+
+  // Restore connection for a specific user (public method)
+  async restoreUserConnection(userId: string): Promise<boolean> {
+    try {
+      const sessionPath = path.join(this.sessionPath, `session-${userId}`);
+      
+      if (!fs.existsSync(sessionPath)) {
+        return false;
+      }
+
+      // Create WhatsApp client with existing session
+      const client = new Client({
+        authStrategy: new LocalAuth({
+          clientId: `client-${userId}`,
+          dataPath: sessionPath
+        }),
+        puppeteer: {
+          headless: true,
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process',
+            '--disable-gpu',
+            '--disable-web-security',
+            '--disable-features=VizDisplayCompositor'
+          ]
+        }
+      });
+
+      const connection: WhatsAppConnection = {
+        client,
+        qr: null,
+        isConnected: false,
+        connectionState: 'restoring',
+      };
+
+      this.connections.set(userId, connection);
+
+      // Set up event handlers for restoration
+      client.on('ready', () => {
+        console.log(`✅ WhatsApp connection restored for user: ${userId}`);
+        connection.isConnected = true;
+        connection.connectionState = 'open';
+        
+        this.emitStatusUpdate(userId, {
+          isConnected: true,
+          state: 'open',
+          qr: null
+        });
+      });
+
+      client.on('disconnected', (reason) => {
+        console.log(`🔌 Restored connection lost for user ${userId}:`, reason);
+        connection.isConnected = false;
+        connection.connectionState = 'disconnected';
+        this.connections.delete(userId);
+        
+        this.emitStatusUpdate(userId, {
+          isConnected: false,
+          state: 'disconnected',
+          qr: null
+        });
+      });
+
+      client.on('auth_failure', (msg) => {
+        console.log(`❌ Auth failure for restored connection user ${userId}:`, msg);
+        connection.isConnected = false;
+        connection.connectionState = 'auth_error';
+        this.connections.delete(userId);
+        
+        this.emitStatusUpdate(userId, {
+          isConnected: false,
+          state: 'auth_error',
+          qr: null
+        });
+      });
+
+      // Initialize the client
+      await client.initialize();
+      
+      // Wait a bit to see if connection is established
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      if (connection.isConnected) {
+        console.log(`✅ Successfully restored WhatsApp connection for user: ${userId}`);
+        return true;
+      } else {
+        console.log(`⚠️ Connection restoration in progress for user: ${userId}`);
+        return true; // Still return true as connection might establish later
+      }
+    } catch (error) {
+      console.error(`Error restoring connection for user ${userId}:`, error);
+      this.connections.delete(userId);
+      return false;
+    }
+  }
+
   private emitStatusUpdate(userId: string, status: { isConnected: boolean; state: string; qr?: string | null }) {
     if (this.io) {
+      console.log('📡 About to emit status update to user:', userId, 'Status:', status);
       this.io.to(`user-${userId}`).emit('whatsapp-status-update', status);
-      console.log('📡 Emitted status update to user:', userId, status);
+      console.log('📡 Status update emitted successfully to user:', userId);
+    } else {
+      console.log('❌ Socket.IO not available for status update');
     }
   }
 
@@ -144,13 +300,24 @@ class WhatsAppService {
       // Add connection timeout to detect stuck connections
       const connectionTimeout = setTimeout(() => {
         if (connection.connectionState === 'connecting' && !connection.isConnected) {
-          console.log('⏰ Connection timeout - QR may not have been scanned within 120 seconds');
-          // Emit timeout status
+          console.log('⏰ Connection timeout - QR may not have been scanned within 60 seconds');
+          // Emit timeout status IMMEDIATELY
+          console.log('📡 Emitting connection timeout status update for user:', userId);
           this.emitStatusUpdate(userId, {
             isConnected: false,
             state: 'timeout',
             qr: connection.qr
           });
+          
+          // Also emit a follow-up update
+          setTimeout(() => {
+            console.log('📡 Sending follow-up timeout status update for user:', userId);
+            this.emitStatusUpdate(userId, {
+              isConnected: false,
+              state: 'timeout',
+              qr: connection.qr
+            });
+          }, 100);
         }
       }, 60000); // Reduced to 60 seconds timeout for faster feedback
 
@@ -194,24 +361,47 @@ class WhatsAppService {
       });
 
       // Handle successful connection
-      client.on('ready', () => {
-        console.log('WhatsApp client is ready for user:', userId);
+      client.on('ready', async () => {
+        console.log('🎉 WhatsApp client is ready for user:', userId);
         connection.isConnected = true;
         connection.qr = null;
         connection.connectionState = 'open';
         clearTimeout(connectionTimeout);
         this.connectionAttempts.delete(userId);
         
-        // Emit real-time update
+        // Update database with connection status
+        try {
+          const { default: User } = await import('../models/User');
+          await User.findByIdAndUpdate(userId, { 
+            whatsappConnected: true,
+            whatsappSessionId: `session-${userId}`
+          });
+          console.log(`✅ Updated database for user ${userId}: WhatsApp connected`);
+        } catch (error) {
+          console.error(`❌ Failed to update database for user ${userId}:`, error);
+        }
+        
+        // Emit real-time update IMMEDIATELY
+        console.log('📡 Emitting WhatsApp connected status update for user:', userId);
         this.emitStatusUpdate(userId, {
           isConnected: true,
           state: 'open',
           qr: null
         });
+        
+        // Also emit a second update after a short delay to ensure it's received
+        setTimeout(() => {
+          console.log('📡 Sending follow-up status update for user:', userId);
+          this.emitStatusUpdate(userId, {
+            isConnected: true,
+            state: 'open',
+            qr: null
+          });
+        }, 100);
       });
 
       // Handle authentication failure
-      client.on('auth_failure', (msg) => {
+      client.on('auth_failure', async (msg) => {
         console.log('Authentication failed for user:', userId, msg);
         connection.isConnected = false;
         connection.qr = null;
@@ -219,6 +409,18 @@ class WhatsAppService {
         this.connections.delete(userId);
         this.connectionAttempts.delete(userId);
         clearTimeout(connectionTimeout);
+        
+        // Update database with auth failure status
+        try {
+          const { default: User } = await import('../models/User');
+          await User.findByIdAndUpdate(userId, { 
+            whatsappConnected: false,
+            whatsappSessionId: null
+          });
+          console.log(`✅ Updated database for user ${userId}: WhatsApp auth failed`);
+        } catch (error) {
+          console.error(`❌ Failed to update database for user ${userId}:`, error);
+        }
         
         // Clean up session files on auth failure
         try {
@@ -229,16 +431,28 @@ class WhatsAppService {
           console.error('Error cleaning up session:', err);
         }
         
+        // Emit auth failure status IMMEDIATELY
+        console.log('📡 Emitting auth failure status update for user:', userId);
         this.emitStatusUpdate(userId, {
           isConnected: false,
           state: 'auth_error',
           qr: null
         });
+        
+        // Also emit a follow-up update
+        setTimeout(() => {
+          console.log('📡 Sending follow-up auth failure status update for user:', userId);
+          this.emitStatusUpdate(userId, {
+            isConnected: false,
+            state: 'auth_error',
+            qr: null
+          });
+        }, 100);
       });
 
       // Handle disconnection
-      client.on('disconnected', (reason) => {
-        console.log('WhatsApp client disconnected for user:', userId, 'Reason:', reason);
+      client.on('disconnected', async (reason) => {
+        console.log('🔌 WhatsApp client disconnected for user:', userId, 'Reason:', reason);
         connection.isConnected = false;
         connection.qr = null;
         connection.connectionState = 'disconnected';
@@ -246,11 +460,35 @@ class WhatsAppService {
         this.connectionAttempts.delete(userId);
         clearTimeout(connectionTimeout);
         
+        // Update database with disconnection status
+        try {
+          const { default: User } = await import('../models/User');
+          await User.findByIdAndUpdate(userId, { 
+            whatsappConnected: false,
+            whatsappSessionId: null
+          });
+          console.log(`✅ Updated database for user ${userId}: WhatsApp disconnected`);
+        } catch (error) {
+          console.error(`❌ Failed to update database for user ${userId}:`, error);
+        }
+        
+        // Emit disconnect status IMMEDIATELY
+        console.log('📡 Emitting WhatsApp disconnected status update for user:', userId);
         this.emitStatusUpdate(userId, {
           isConnected: false,
           state: 'disconnected',
           qr: null
         });
+        
+        // Also emit a follow-up update to ensure it's received
+        setTimeout(() => {
+          console.log('📡 Sending follow-up disconnect status update for user:', userId);
+          this.emitStatusUpdate(userId, {
+            isConnected: false,
+            state: 'disconnected',
+            qr: null
+          });
+        }, 100);
       });
 
       // Initialize the client
@@ -258,11 +496,11 @@ class WhatsAppService {
 
       // Wait for QR code generation with faster polling
       let qrAttempts = 0;
-      const maxAttempts = 5;
-      const baseWaitTime = 1000; // Reduced from 3000ms to 1000ms
+      const maxAttempts = 10; // Increased attempts for better coverage
+      const baseWaitTime = 100; // Reduced from 200ms to 100ms
 
       while (!connection.qr && qrAttempts < maxAttempts && connection.isConnected === false) {
-        const waitTime = baseWaitTime + (qrAttempts * 500); // Reduced increment from 2000ms to 500ms
+        const waitTime = baseWaitTime + (qrAttempts * 100); // Reduced increment from 200ms to 100ms
         await new Promise(resolve => setTimeout(resolve, waitTime));
         qrAttempts++;
         console.log(`QR generation attempt ${qrAttempts}/${maxAttempts} - State: ${connection.connectionState}, Connected: ${connection.isConnected}, HasQR: ${!!connection.qr}`);
@@ -547,6 +785,33 @@ class WhatsAppService {
 
     console.log('Connection timeout - QR may not have been scanned');
     return false;
+  }
+
+  // Check if user has existing session files
+  hasExistingSession(userId: string): boolean {
+    const sessionPath = path.join(this.sessionPath, `session-${userId}`);
+    return fs.existsSync(sessionPath);
+  }
+
+  // Get all active connections count
+  getActiveConnectionsCount(): number {
+    return this.connections.size;
+  }
+
+  // Get connection info for debugging
+  getConnectionInfo(userId: string): any {
+    const connection = this.connections.get(userId);
+    if (!connection) {
+      return { exists: false };
+    }
+    
+    return {
+      exists: true,
+      isConnected: connection.isConnected,
+      state: connection.connectionState,
+      hasQR: !!connection.qr,
+      hasSession: this.hasExistingSession(userId)
+    };
   }
 }
 

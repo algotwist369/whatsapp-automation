@@ -1,258 +1,202 @@
 'use client';
 
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import Link from 'next/link';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuthStore } from '@/store/authStore';
 import { useWhatsAppStore } from '@/store/whatsappStore';
-import { useSettingsStore } from '@/store/settingsStore';
-import { messagesApi } from '@/lib/api';
-import { Statistics } from '@/types';
 import { WhatsAppConnectionComponent } from '@/components/whatsapp/WhatsAppConnection';
 import {
   UserGroupIcon,
   ChatBubbleLeftRightIcon,
+  CogIcon,
+  DocumentTextIcon,
+  PhoneIcon,
   CheckCircleIcon,
-  XCircleIcon,
-  ArrowUpIcon,
+  ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
 
 export default function DashboardPage() {
   const { user } = useAuthStore();
   const { isConnected } = useWhatsAppStore();
-  const { settings } = useSettingsStore();
-  const [stats, setStats] = useState<Statistics | null>(null);
-  const [loading, setLoading] = useState(true);
 
-  // Redirect to login if not authenticated
-  useEffect(() => {
-    if (!user) {
-      window.location.href = '/auth/login';
+  const quickActions = [
+    {
+      title: 'Send Messages',
+      description: 'Create and send bulk messages to your contacts',
+      icon: ChatBubbleLeftRightIcon,
+      href: '/messages',
+      color: 'bg-blue-500',
+      disabled: !isConnected,
+      disabledText: 'Connect WhatsApp first'
+    },
+    {
+      title: 'Manage Contacts',
+      description: 'Add, edit, or organize your contact list',
+      icon: UserGroupIcon,
+      href: '/contacts',
+      color: 'bg-green-500',
+      disabled: false
+    },
+    {
+      title: 'Settings',
+      description: 'Configure your WhatsApp and app preferences',
+      icon: CogIcon,
+      href: '/settings',
+      color: 'bg-purple-500',
+      disabled: false
+    },
+    {
+      title: 'Message History',
+      description: 'View your sent messages and delivery status',
+      icon: DocumentTextIcon,
+      href: '/messages',
+      color: 'bg-orange-500',
+      disabled: false
     }
-  }, [user]);
+  ];
 
-  useEffect(() => {
-    const fetchDashboardData = async () => {
-      try {
-        setLoading(true);
-        const statsResponse = await messagesApi.getStatistics('7'); // Last 7 days
-
-        if (statsResponse.success && statsResponse.data) {
-          setStats(statsResponse.data);
-        } else {
-          console.error('Failed to fetch statistics:', statsResponse.message);
-        }
-      } catch (error) {
-        console.error('Error fetching dashboard data:', error);
-        // Set default stats to prevent UI errors
-        setStats({
-          period: '7 days',
-          messageStats: [],
-          bulkMessageStats: [],
-          totalContacts: 0
-        });
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    // Only fetch if user is authenticated
-    if (user) {
-      fetchDashboardData();
-    } else {
-      setLoading(false);
+  const statusInfo = [
+    {
+      icon: PhoneIcon,
+      title: 'WhatsApp Status',
+      status: isConnected ? 'Connected' : 'Disconnected',
+      color: isConnected ? 'text-green-600' : 'text-red-600',
+      bgColor: isConnected ? 'bg-green-50' : 'bg-red-50',
+      borderColor: isConnected ? 'border-green-200' : 'border-red-200'
+    },
+    {
+      icon: CheckCircleIcon,
+      title: 'Account Status',
+      status: 'Active',
+      color: 'text-green-600',
+      bgColor: 'bg-green-50',
+      borderColor: 'border-green-200'
     }
-  }, [user]);
-
-  const getStatValue = useCallback((stats: any[], status: string) => {
-    const stat = stats.find(s => s._id === status);
-    return stat ? stat.count : 0;
-  }, []);
-
-  const totalMessages = useMemo(() => {
-    if (!stats) return 0;
-    return getStatValue(stats.messageStats, 'sent') + 
-           getStatValue(stats.messageStats, 'delivered') + 
-           getStatValue(stats.messageStats, 'read');
-  }, [stats, getStatValue]);
-
-  const successfulMessages = useMemo(() => {
-    if (!stats) return 0;
-    return getStatValue(stats.messageStats, 'sent') + 
-           getStatValue(stats.messageStats, 'delivered') + 
-           getStatValue(stats.messageStats, 'read');
-  }, [stats, getStatValue]);
-
-  const failedMessages = useMemo(() => {
-    return stats ? getStatValue(stats.messageStats, 'failed') : 0;
-  }, [stats, getStatValue]);
-
-  const successRate = useMemo(() => {
-    return totalMessages > 0 ? (successfulMessages / totalMessages) * 100 : 0;
-  }, [totalMessages, successfulMessages]);
-
-  if (loading) {
-    return (
-      <DashboardLayout title="Dashboard" subtitle="Welcome to WhatsApp Bulk Messenger">
-        <div className="flex items-center justify-center h-64">
-          <div className="loading-spinner"></div>
-        </div>
-      </DashboardLayout>
-    );
-  }
+  ];
 
   return (
     <DashboardLayout title="Dashboard" subtitle={`Welcome back, ${user?.name}`}>
-      <div className="space-y-6">
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="card">
-            <div className="card-body">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <UserGroupIcon className="h-8 w-8 text-primary-600" />
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      Total Contacts
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {stats?.totalContacts || 0}
-                    </dd>
-                  </dl>
-                </div>
-              </div>
+      <div className="space-y-8">
+        
+        {/* Welcome Section */}
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-6 border border-blue-200">
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">
+            Welcome to WhatsApp Bulk Messenger
+          </h2>
+          <p className="text-gray-600 mb-4">
+            Send personalized bulk messages to your contacts efficiently and professionally.
+          </p>
+          {!isConnected && (
+            <div className="flex items-center p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+              <ExclamationTriangleIcon className="h-5 w-5 text-yellow-600 mr-2" />
+              <span className="text-sm text-yellow-800">
+                Connect your WhatsApp account to start sending messages
+              </span>
             </div>
-          </div>
-
-          <div className="card">
-            <div className="card-body">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <ChatBubbleLeftRightIcon className="h-8 w-8 text-green-600" />
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      Messages Sent
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {totalMessages}
-                    </dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-body">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <CheckCircleIcon className="h-8 w-8 text-green-600" />
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      Success Rate
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {successRate.toFixed(1)}%
-                    </dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-body">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <XCircleIcon className="h-8 w-8 text-red-600" />
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      Failed Messages
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {failedMessages}
-                    </dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
-          </div>
+          )}
         </div>
 
-        {/* WhatsApp Connection Status */}
+        {/* Status Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {statusInfo.map((item, index) => (
+            <div key={index} className={`${item.bgColor} ${item.borderColor} border rounded-lg p-4`}>
+              <div className="flex items-center">
+                <item.icon className={`h-6 w-6 ${item.color} mr-3`} />
+                <div>
+                  <h3 className="font-medium text-gray-900">{item.title}</h3>
+                  <p className={`text-sm ${item.color}`}>{item.status}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* WhatsApp Connection */}
         <WhatsAppConnectionComponent />
 
         {/* Quick Actions */}
-        <div className="card">
-          <div className="card-header">
-            <h3 className="text-lg leading-6 font-medium text-gray-900">
-              Quick Actions
-            </h3>
-          </div>
-          <div className="card-body">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <button 
-                className={`btn ${isConnected ? 'btn-primary' : 'btn-secondary'}`}
-                disabled={!isConnected}
-                title={!isConnected ? 'Connect WhatsApp first' : 'Send bulk messages'}
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {quickActions.map((action, index) => (
+              <Link
+                key={index}
+                href={action.disabled ? '#' : action.href}
+                className={`block bg-white border rounded-lg p-4 hover:shadow-md transition-shadow ${
+                  action.disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:border-gray-300'
+                }`}
+                onClick={(e) => action.disabled && e.preventDefault()}
               >
-                <ChatBubbleLeftRightIcon className="h-5 w-5 mr-2" />
-                Send Bulk Message
-                {!isConnected && (
-                  <span className="ml-2 text-xs">(Requires WhatsApp)</span>
-                )}
-              </button>
-              <button className="btn btn-secondary">
-                <UserGroupIcon className="h-5 w-5 mr-2" />
-                Add Contacts
-              </button>
-              <button className="btn btn-secondary">
-                <ArrowUpIcon className="h-5 w-5 mr-2" />
-                Upload Excel
-              </button>
+                <div className="flex items-start">
+                  <div className={`${action.color} rounded-lg p-2 mr-3`}>
+                    <action.icon className="h-5 w-5 text-white" />
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-medium text-gray-900 mb-1">{action.title}</h4>
+                    <p className="text-sm text-gray-600 mb-2">{action.description}</p>
+                    {action.disabled && action.disabledText && (
+                      <p className="text-xs text-red-600">{action.disabledText}</p>
+                    )}
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+
+        {/* Getting Started */}
+        <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Getting Started</h3>
+          <div className="space-y-3">
+            <div className="flex items-start">
+              <div className="bg-blue-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm font-medium mr-3 mt-0.5">
+                1
+              </div>
+              <div>
+                <p className="font-medium text-gray-900">Connect WhatsApp</p>
+                <p className="text-sm text-gray-600">Scan the QR code to link your WhatsApp account</p>
+              </div>
+            </div>
+            <div className="flex items-start">
+              <div className="bg-blue-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm font-medium mr-3 mt-0.5">
+                2
+              </div>
+              <div>
+                <p className="font-medium text-gray-900">Add Contacts</p>
+                <p className="text-sm text-gray-600">Import or manually add your contact list</p>
+              </div>
+            </div>
+            <div className="flex items-start">
+              <div className="bg-blue-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm font-medium mr-3 mt-0.5">
+                3
+              </div>
+              <div>
+                <p className="font-medium text-gray-900">Send Messages</p>
+                <p className="text-sm text-gray-600">Create and send personalized bulk messages</p>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Recent Activity */}
-        <div className="card">
-          <div className="card-header">
-            <h3 className="text-lg leading-6 font-medium text-gray-900">
-              Recent Activity (Last 7 Days)
-            </h3>
-          </div>
-          <div className="card-body">
-            {stats ? (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between py-2 border-b border-gray-200">
-                  <span className="text-sm font-medium text-gray-900">Total Messages</span>
-                  <span className="text-sm text-gray-500">{totalMessages}</span>
-                </div>
-                <div className="flex items-center justify-between py-2 border-b border-gray-200">
-                  <span className="text-sm font-medium text-gray-900">Successful</span>
-                  <span className="text-sm text-green-600">{successfulMessages}</span>
-                </div>
-                <div className="flex items-center justify-between py-2 border-b border-gray-200">
-                  <span className="text-sm font-medium text-gray-900">Failed</span>
-                  <span className="text-sm text-red-600">{failedMessages}</span>
-                </div>
-                <div className="flex items-center justify-between py-2">
-                  <span className="text-sm font-medium text-gray-900">Success Rate</span>
-                  <span className="text-sm text-gray-500">{successRate.toFixed(1)}%</span>
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-gray-500">No activity data available</p>
-            )}
+        {/* Features */}
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Key Features</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-white border rounded-lg p-4">
+              <h4 className="font-medium text-gray-900 mb-2">AI-Powered Messages</h4>
+              <p className="text-sm text-gray-600">Automatic spam detection and message optimization for better delivery rates</p>
+            </div>
+            <div className="bg-white border rounded-lg p-4">
+              <h4 className="font-medium text-gray-900 mb-2">Bulk Messaging</h4>
+              <p className="text-sm text-gray-600">Send personalized messages to hundreds of contacts simultaneously</p>
+            </div>
+            <div className="bg-white border rounded-lg p-4">
+              <h4 className="font-medium text-gray-900 mb-2">Real-time Updates</h4>
+              <p className="text-sm text-gray-600">Track message delivery status and connection status in real-time</p>
+            </div>
           </div>
         </div>
+
       </div>
     </DashboardLayout>
   );

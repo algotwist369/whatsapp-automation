@@ -1,29 +1,36 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useForm } from 'react-hook-form';
+import { useState, useEffect, useCallback, memo } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuthStore } from '@/store/authStore';
 import { useWhatsAppStore } from '@/store/whatsappStore';
 import { useSettingsStore } from '@/store/settingsStore';
-import { whatsappApi } from '@/lib/api';
 import toast from 'react-hot-toast';
+import {
+  SettingsTab,
+  SettingsSection,
+  ProfileSettings,
+  MessageSettings,
+  AISettings,
+  WhatsAppSettings,
+  NotificationSettings,
+  RegionalSettings,
+  PerformanceSettings,
+  SecuritySettings,
+  UISettings,
+} from '@/components/settings';
 import {
   CogIcon,
   BellIcon,
   ShieldCheckIcon,
   GlobeAltIcon,
   UserIcon,
-  KeyIcon,
   TrashIcon,
   CheckCircleIcon,
-  ExclamationTriangleIcon,
   SparklesIcon,
   ChatBubbleLeftRightIcon,
   DevicePhoneMobileIcon,
   ChartBarIcon,
-  EyeIcon,
-  EyeSlashIcon,
 } from '@heroicons/react/24/outline';
 
 export default function SettingsPage() {
@@ -46,60 +53,83 @@ export default function SettingsPage() {
   } = useSettingsStore();
 
   const [activeTab, setActiveTab] = useState('profile');
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-    watch,
-    setValue,
-  } = useForm();
 
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
 
-  const handleMessageSettingsChange = (field: string, value: any) => {
-    updateMessageSettings({ [field]: value });
-    toast.success('Message settings updated');
-  };
+  // Memoized settings change handlers
+  const handleMessageSettingsChange = useCallback(async (field: string, value: any) => {
+    try {
+      await updateMessageSettings({ [field]: value });
+      toast.success('Message settings updated');
+    } catch (error) {
+      toast.error('Failed to update message settings');
+    }
+  }, [updateMessageSettings]);
 
-  const handleAISettingsChange = (field: string, value: any) => {
-    updateAISettings({ [field]: value });
-    toast.success('AI settings updated');
-  };
+  const handleAISettingsChange = useCallback(async (field: string, value: any) => {
+    try {
+      await updateAISettings({ [field]: value });
+      toast.success('AI settings updated');
+    } catch (error) {
+      toast.error('Failed to update AI settings');
+    }
+  }, [updateAISettings]);
 
-  const handleWhatsAppSettingsChange = (field: string, value: any) => {
-    updateWhatsAppSettings({ [field]: value });
-    toast.success('WhatsApp settings updated');
-  };
+  const handleWhatsAppSettingsChange = useCallback(async (field: string, value: any) => {
+    try {
+      await updateWhatsAppSettings({ [field]: value });
+      toast.success('WhatsApp settings updated');
+    } catch (error) {
+      toast.error('Failed to update WhatsApp settings');
+    }
+  }, [updateWhatsAppSettings]);
 
-  const handleNotificationSettingsChange = (field: string, value: any) => {
-    updateNotificationSettings({ [field]: value });
-    toast.success('Notification settings updated');
-  };
+  const handleNotificationSettingsChange = useCallback(async (field: string, value: any) => {
+    try {
+      await updateNotificationSettings({ [field]: value });
+      toast.success('Notification settings updated');
+    } catch (error) {
+      toast.error('Failed to update notification settings');
+    }
+  }, [updateNotificationSettings]);
 
-  const handleRegionalSettingsChange = (field: string, value: any) => {
-    updateRegionalSettings({ [field]: value });
-    toast.success('Regional settings updated');
-  };
+  const handleRegionalSettingsChange = useCallback(async (field: string, value: any) => {
+    try {
+      await updateRegionalSettings({ [field]: value });
+      toast.success('Regional settings updated');
+    } catch (error) {
+      toast.error('Failed to update regional settings');
+    }
+  }, [updateRegionalSettings]);
 
-  const handlePerformanceSettingsChange = (field: string, value: any) => {
-    updatePerformanceSettings({ [field]: value });
-    toast.success('Performance settings updated');
-  };
+  const handlePerformanceSettingsChange = useCallback(async (field: string, value: any) => {
+    try {
+      await updatePerformanceSettings({ [field]: value });
+      toast.success('Performance settings updated');
+    } catch (error) {
+      toast.error('Failed to update performance settings');
+    }
+  }, [updatePerformanceSettings]);
 
-  const handleSecuritySettingsChange = (field: string, value: any) => {
-    updateSecuritySettings({ [field]: value });
-    toast.success('Security settings updated');
-  };
+  const handleSecuritySettingsChange = useCallback(async (field: string, value: any) => {
+    try {
+      await updateSecuritySettings({ [field]: value });
+      toast.success('Security settings updated');
+    } catch (error) {
+      toast.error('Failed to update security settings');
+    }
+  }, [updateSecuritySettings]);
 
-  const handleUISettingsChange = (field: string, value: any) => {
-    updateUISettings({ [field]: value });
-    toast.success('UI settings updated');
-  };
+  const handleUISettingsChange = useCallback(async (field: string, value: any) => {
+    try {
+      await updateUISettings({ [field]: value });
+      toast.success('UI settings updated');
+    } catch (error) {
+      toast.error('Failed to update UI settings');
+    }
+  }, [updateUISettings]);
 
   const handleResetSettings = async () => {
     if (confirm('Are you sure you want to reset all settings to default? This action cannot be undone.')) {
@@ -134,587 +164,126 @@ export default function SettingsPage() {
     <DashboardLayout title="Settings" subtitle="Manage your application preferences">
       <div className="max-w-7xl mx-auto">
         <div className="bg-white shadow rounded-lg">
-          <div className="border-b border-gray-200">
-            <nav className="-mb-px flex space-x-8 px-6" aria-label="Tabs">
-              {tabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`${
-                    activeTab === tab.id
-                      ? 'border-primary-500 text-primary-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
-                >
-                  <tab.icon className="h-5 w-5 mr-2" />
-                  {tab.name}
-                </button>
-              ))}
-            </nav>
-          </div>
+          <SettingsTab
+            tabs={tabs}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+          />
 
           <div className="p-6">
             {/* Profile Settings */}
             {activeTab === 'profile' && (
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-lg leading-6 font-medium text-gray-900">Profile Information</h3>
-                  <p className="mt-1 text-sm text-gray-500">Update your personal information</p>
-                </div>
-
-                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Name</label>
-                    <input
-                      type="text"
-                      defaultValue={user?.name || ''}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                      disabled
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Email</label>
-                    <input
-                      type="email"
-                      defaultValue={user?.email || ''}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                      disabled
-                    />
-                  </div>
-                </div>
-              </div>
+              <SettingsSection
+                title="Profile Information"
+                description="Update your personal information"
+              >
+                <ProfileSettings user={user} />
+              </SettingsSection>
             )}
 
             {/* Message Settings */}
             {activeTab === 'messages' && (
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-lg leading-6 font-medium text-gray-900">Message Settings</h3>
-                  <p className="mt-1 text-sm text-gray-500">Configure how messages are sent</p>
-                </div>
-
-                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Message Delay (seconds)
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="60"
-                      value={settings.messageDelay}
-                      onChange={(e) => handleMessageSettingsChange('messageDelay', parseInt(e.target.value))}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    />
-                    <p className="mt-1 text-xs text-gray-500">Delay between sending messages</p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Max Retries
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="10"
-                      value={settings.maxRetries}
-                      onChange={(e) => handleMessageSettingsChange('maxRetries', parseInt(e.target.value))}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    />
-                    <p className="mt-1 text-xs text-gray-500">Maximum retry attempts for failed messages</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={settings.autoRetry}
-                    onChange={(e) => handleMessageSettingsChange('autoRetry', e.target.checked)}
-                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                  />
-                  <label className="ml-2 block text-sm text-gray-900">
-                    Automatically retry failed messages
-                  </label>
-                </div>
-              </div>
+              <SettingsSection
+                title="Message Settings"
+                description="Configure how messages are sent"
+              >
+                <MessageSettings
+                  settings={settings}
+                  onSettingChange={handleMessageSettingsChange}
+                />
+              </SettingsSection>
             )}
 
             {/* AI Settings */}
             {activeTab === 'ai' && (
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-lg leading-6 font-medium text-gray-900">AI Settings</h3>
-                  <p className="mt-1 text-sm text-gray-500">Configure AI-powered features</p>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      checked={settings.aiEnabled}
-                      onChange={(e) => handleAISettingsChange('aiEnabled', e.target.checked)}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                    />
-                    <label className="ml-2 block text-sm text-gray-900">
-                      Enable AI Analysis
-                    </label>
-                  </div>
-
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      checked={settings.spamDetection}
-                      onChange={(e) => handleAISettingsChange('spamDetection', e.target.checked)}
-                      disabled={!settings.aiEnabled}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded disabled:opacity-50"
-                    />
-                    <label className="ml-2 block text-sm text-gray-900">
-                      Spam Detection
-                    </label>
-                  </div>
-
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      checked={settings.messageRewriting}
-                      onChange={(e) => handleAISettingsChange('messageRewriting', e.target.checked)}
-                      disabled={!settings.aiEnabled}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded disabled:opacity-50"
-                    />
-                    <label className="ml-2 block text-sm text-gray-900">
-                      Message Rewriting
-                    </label>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">AI Model</label>
-                    <select
-                      value={settings.aiModel}
-                      onChange={(e) => handleAISettingsChange('aiModel', e.target.value)}
-                      disabled={!settings.aiEnabled}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm disabled:opacity-50"
-                    >
-                      <option value="gpt-3.5-turbo">GPT-3.5 Turbo (Faster)</option>
-                      <option value="gpt-4">GPT-4 (More Accurate)</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
+              <SettingsSection
+                title="AI Settings"
+                description="Configure AI-powered features"
+              >
+                <AISettings
+                  settings={settings}
+                  onSettingChange={handleAISettingsChange}
+                />
+              </SettingsSection>
             )}
 
             {/* WhatsApp Settings */}
             {activeTab === 'whatsapp' && (
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-lg leading-6 font-medium text-gray-900">WhatsApp Settings</h3>
-                  <p className="mt-1 text-sm text-gray-500">Configure WhatsApp connection settings</p>
-                </div>
-
-                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Connection Timeout (seconds)
-                    </label>
-                    <input
-                      type="number"
-                      min="30"
-                      max="300"
-                      value={settings.whatsappTimeout}
-                      onChange={(e) => handleWhatsAppSettingsChange('whatsappTimeout', parseInt(e.target.value))}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      QR Refresh Interval (seconds)
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="30"
-                      value={settings.qrRefreshInterval}
-                      onChange={(e) => handleWhatsAppSettingsChange('qrRefreshInterval', parseInt(e.target.value))}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={settings.autoReconnect}
-                    onChange={(e) => handleWhatsAppSettingsChange('autoReconnect', e.target.checked)}
-                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                  />
-                  <label className="ml-2 block text-sm text-gray-900">
-                    Automatically reconnect on disconnect
-                  </label>
-                </div>
-
-                <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
-                  <div className="flex">
-                    <div className="flex-shrink-0">
-                      <CheckCircleIcon className="h-5 w-5 text-blue-400" />
-                    </div>
-                    <div className="ml-3">
-                      <h3 className="text-sm font-medium text-blue-800">
-                        WhatsApp Status: {isConnected ? 'Connected' : 'Not Connected'}
-                      </h3>
-                      <div className="mt-2 text-sm text-blue-700">
-                        <p>Current settings will be applied to new connections.</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <SettingsSection
+                title="WhatsApp Settings"
+                description="Configure WhatsApp connection settings"
+              >
+                <WhatsAppSettings
+                  settings={settings}
+                  isConnected={isConnected}
+                  onSettingChange={handleWhatsAppSettingsChange}
+                />
+              </SettingsSection>
             )}
 
             {/* Notification Settings */}
             {activeTab === 'notifications' && (
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-lg leading-6 font-medium text-gray-900">Notification Settings</h3>
-                  <p className="mt-1 text-sm text-gray-500">Configure how you receive notifications</p>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      checked={settings.emailNotifications}
-                      onChange={(e) => handleNotificationSettingsChange('emailNotifications', e.target.checked)}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                    />
-                    <label className="ml-2 block text-sm text-gray-900">
-                      Email Notifications
-                    </label>
-                  </div>
-
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      checked={settings.pushNotifications}
-                      onChange={(e) => handleNotificationSettingsChange('pushNotifications', e.target.checked)}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                    />
-                    <label className="ml-2 block text-sm text-gray-900">
-                      Push Notifications
-                    </label>
-                  </div>
-
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      checked={settings.soundNotifications}
-                      onChange={(e) => handleNotificationSettingsChange('soundNotifications', e.target.checked)}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                    />
-                    <label className="ml-2 block text-sm text-gray-900">
-                      Sound Notifications
-                    </label>
-                  </div>
-
-                  <div>
-                    <h4 className="text-sm font-medium text-gray-900 mb-3">Notification Types</h4>
-                    <div className="space-y-2">
-                      {Object.entries(settings.notificationTypes).map(([key, value]) => (
-                        <div key={key} className="flex items-center">
-                          <input
-                            type="checkbox"
-                            checked={value}
-                            onChange={(e) => handleNotificationSettingsChange('notificationTypes', {
-                              ...settings.notificationTypes,
-                              [key]: e.target.checked
-                            })}
-                            className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                          />
-                          <label className="ml-2 block text-sm text-gray-900 capitalize">
-                            {key.replace(/([A-Z])/g, ' $1').trim()}
-                          </label>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <SettingsSection
+                title="Notification Settings"
+                description="Configure how you receive notifications"
+              >
+                <NotificationSettings
+                  settings={settings}
+                  onSettingChange={handleNotificationSettingsChange}
+                />
+              </SettingsSection>
             )}
 
             {/* Regional Settings */}
             {activeTab === 'regional' && (
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-lg leading-6 font-medium text-gray-900">Regional Settings</h3>
-                  <p className="mt-1 text-sm text-gray-500">Configure your regional preferences</p>
-                </div>
-
-                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Timezone</label>
-                    <select
-                      value={settings.timezone}
-                      onChange={(e) => handleRegionalSettingsChange('timezone', e.target.value)}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    >
-                      <option value="Asia/Kolkata">Asia/Kolkata (India)</option>
-                      <option value="America/New_York">America/New_York (EST)</option>
-                      <option value="Europe/London">Europe/London (GMT)</option>
-                      <option value="Asia/Tokyo">Asia/Tokyo (JST)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Date Format</label>
-                    <select
-                      value={settings.dateFormat}
-                      onChange={(e) => handleRegionalSettingsChange('dateFormat', e.target.value)}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    >
-                      <option value="DD/MM/YYYY">DD/MM/YYYY</option>
-                      <option value="MM/DD/YYYY">MM/DD/YYYY</option>
-                      <option value="YYYY-MM-DD">YYYY-MM-DD</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Time Format</label>
-                    <select
-                      value={settings.timeFormat}
-                      onChange={(e) => handleRegionalSettingsChange('timeFormat', e.target.value)}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    >
-                      <option value="12h">12 Hour (AM/PM)</option>
-                      <option value="24h">24 Hour</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Currency</label>
-                    <select
-                      value={settings.currency}
-                      onChange={(e) => handleRegionalSettingsChange('currency', e.target.value)}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    >
-                      <option value="INR">INR (₹)</option>
-                      <option value="USD">USD ($)</option>
-                      <option value="EUR">EUR (€)</option>
-                      <option value="GBP">GBP (£)</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
+              <SettingsSection
+                title="Regional Settings"
+                description="Configure your regional preferences"
+              >
+                <RegionalSettings
+                  settings={settings}
+                  onSettingChange={handleRegionalSettingsChange}
+                />
+              </SettingsSection>
             )}
 
             {/* Performance Settings */}
             {activeTab === 'performance' && (
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-lg leading-6 font-medium text-gray-900">Performance Settings</h3>
-                  <p className="mt-1 text-sm text-gray-500">Optimize application performance</p>
-                </div>
-
-                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Batch Size
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="100"
-                      value={settings.batchSize}
-                      onChange={(e) => handlePerformanceSettingsChange('batchSize', parseInt(e.target.value))}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    />
-                    <p className="mt-1 text-xs text-gray-500">Messages processed in one batch</p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Concurrent Connections
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="20"
-                      value={settings.concurrentConnections}
-                      onChange={(e) => handlePerformanceSettingsChange('concurrentConnections', parseInt(e.target.value))}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    />
-                    <p className="mt-1 text-xs text-gray-500">Maximum concurrent connections</p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Cache Duration (minutes)
-                    </label>
-                    <input
-                      type="number"
-                      min="5"
-                      max="1440"
-                      value={settings.cacheDuration}
-                      onChange={(e) => handlePerformanceSettingsChange('cacheDuration', parseInt(e.target.value))}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    />
-                    <p className="mt-1 text-xs text-gray-500">How long to cache data</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={settings.cacheEnabled}
-                    onChange={(e) => handlePerformanceSettingsChange('cacheEnabled', e.target.checked)}
-                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                  />
-                  <label className="ml-2 block text-sm text-gray-900">
-                    Enable caching for better performance
-                  </label>
-                </div>
-              </div>
+              <SettingsSection
+                title="Performance Settings"
+                description="Optimize application performance"
+              >
+                <PerformanceSettings
+                  settings={settings}
+                  onSettingChange={handlePerformanceSettingsChange}
+                />
+              </SettingsSection>
             )}
 
             {/* Security Settings */}
             {activeTab === 'security' && (
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-lg leading-6 font-medium text-gray-900">Security Settings</h3>
-                  <p className="mt-1 text-sm text-gray-500">Configure security preferences</p>
-                </div>
-
-                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Session Timeout (minutes)
-                    </label>
-                    <input
-                      type="number"
-                      min="15"
-                      max="480"
-                      value={settings.sessionTimeout}
-                      onChange={(e) => handleSecuritySettingsChange('sessionTimeout', parseInt(e.target.value))}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Max Login Attempts
-                    </label>
-                    <input
-                      type="number"
-                      min="3"
-                      max="10"
-                      value={settings.loginAttempts}
-                      onChange={(e) => handleSecuritySettingsChange('loginAttempts', parseInt(e.target.value))}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      checked={settings.requirePasswordChange}
-                      onChange={(e) => handleSecuritySettingsChange('requirePasswordChange', e.target.checked)}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                    />
-                    <label className="ml-2 block text-sm text-gray-900">
-                      Require password change on next login
-                    </label>
-                  </div>
-
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      checked={settings.twoFactorAuth}
-                      onChange={(e) => handleSecuritySettingsChange('twoFactorAuth', e.target.checked)}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                    />
-                    <label className="ml-2 block text-sm text-gray-900">
-                      Enable Two-Factor Authentication
-                    </label>
-                  </div>
-                </div>
-              </div>
+              <SettingsSection
+                title="Security Settings"
+                description="Configure security preferences"
+              >
+                <SecuritySettings
+                  settings={settings}
+                  onSettingChange={handleSecuritySettingsChange}
+                />
+              </SettingsSection>
             )}
 
             {/* UI Settings */}
             {activeTab === 'ui' && (
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-lg leading-6 font-medium text-gray-900">Interface Settings</h3>
-                  <p className="mt-1 text-sm text-gray-500">Customize your user interface</p>
-                </div>
-
-                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Theme</label>
-                    <select
-                      value={settings.theme}
-                      onChange={(e) => handleUISettingsChange('theme', e.target.value)}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    >
-                      <option value="light">Light</option>
-                      <option value="dark">Dark</option>
-                      <option value="auto">Auto (System)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Language</label>
-                    <select
-                      value={settings.language}
-                      onChange={(e) => handleUISettingsChange('language', e.target.value)}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    >
-                      <option value="en">English</option>
-                      <option value="hi">Hindi</option>
-                      <option value="es">Spanish</option>
-                      <option value="fr">French</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      checked={settings.sidebarCollapsed}
-                      onChange={(e) => handleUISettingsChange('sidebarCollapsed', e.target.checked)}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                    />
-                    <label className="ml-2 block text-sm text-gray-900">
-                      Collapse sidebar by default
-                    </label>
-                  </div>
-
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      checked={settings.animationsEnabled}
-                      onChange={(e) => handleUISettingsChange('animationsEnabled', e.target.checked)}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                    />
-                    <label className="ml-2 block text-sm text-gray-900">
-                      Enable animations
-                    </label>
-                  </div>
-
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      checked={settings.compactMode}
-                      onChange={(e) => handleUISettingsChange('compactMode', e.target.checked)}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                    />
-                    <label className="ml-2 block text-sm text-gray-900">
-                      Compact mode
-                    </label>
-                  </div>
-                </div>
-              </div>
+              <SettingsSection
+                title="Interface Settings"
+                description="Customize your user interface"
+              >
+                <UISettings
+                  settings={settings}
+                  onSettingChange={handleUISettingsChange}
+                />
+              </SettingsSection>
             )}
           </div>
 

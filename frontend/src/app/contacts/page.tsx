@@ -14,6 +14,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useForm } from 'react-hook-form';
 import toast from 'react-hot-toast';
+import { InputField } from '@/components/common';
 
 export default function ContactsPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -143,14 +144,13 @@ export default function ContactsPage() {
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div className="flex flex-col sm:flex-row gap-4 flex-1">
             {/* Search */}
-            <div className="relative flex-1 max-w-md">
-              <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-              <input
-                type="text"
+            <div className="flex-1 max-w-md">
+              <InputField
+                type="search"
                 placeholder="Search contacts..."
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="input pl-10"
+                onChange={(value) => setSearchTerm(value as string)}
+                leftIcon={<MagnifyingGlassIcon className="h-5 w-5" />}
               />
             </div>
 
@@ -196,45 +196,30 @@ export default function ContactsPage() {
             <div className="card-body">
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Name *
-                    </label>
-                    <input
-                      {...register('name', { required: 'Name is required' })}
-                      type="text"
-                      className={`input ${errors.name ? 'input-error' : ''}`}
-                      placeholder="Contact name"
-                    />
-                    {errors.name && (
-                      <p className="mt-1 text-sm text-red-600">{errors.name.message}</p>
-                    )}
-                  </div>
+                  <InputField
+                    label="Name"
+                    type="text"
+                    placeholder="Contact name"
+                    register={register('name', { required: 'Name is required' })}
+                    error={errors.name?.message}
+                    required
+                  />
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Phone *
-                    </label>
-                    <input
-                      {...register('phone', { required: 'Phone is required' })}
-                      type="tel"
-                      className={`input ${errors.phone ? 'input-error' : ''}`}
-                      placeholder="Phone number"
-                    />
-                    {errors.phone && (
-                      <p className="mt-1 text-sm text-red-600">{errors.phone.message}</p>
-                    )}
-                  </div>
+                  <InputField
+                    label="Phone"
+                    type="tel"
+                    placeholder="Phone number"
+                    register={register('phone', { required: 'Phone is required' })}
+                    error={errors.phone?.message}
+                    required
+                  />
 
                   <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Email (Optional)
-                    </label>
-                    <input
-                      {...register('email')}
+                    <InputField
+                      label="Email (Optional)"
                       type="email"
-                      className="input"
                       placeholder="Email address"
+                      register={register('email')}
                     />
                   </div>
                 </div>

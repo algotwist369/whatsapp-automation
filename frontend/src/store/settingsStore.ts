@@ -60,6 +60,7 @@ interface SettingsStore {
   settings: UserSettings;
   isLoading: boolean;
   isSaving: boolean;
+  lastLoadTime: number;
   
   // Actions
   updateSettings: (updates: Partial<UserSettings>) => Promise<void>;
@@ -139,6 +140,7 @@ export const useSettingsStore = create<SettingsStore>()(
       settings: defaultSettings,
       isLoading: false,
       isSaving: false,
+      lastLoadTime: 0,
       
       updateSettings: async (updates: Partial<UserSettings>) => {
         set({ isSaving: true });
@@ -146,13 +148,23 @@ export const useSettingsStore = create<SettingsStore>()(
           const currentSettings = get().settings;
           const newSettings = { ...currentSettings, ...updates };
           
+          // Update local state immediately
           set({ settings: newSettings });
           
-          // Save to localStorage immediately
+          // Apply settings changes immediately
+          get().applySettings?.(newSettings);
+          
+          // Save to localStorage as backup
           localStorage.setItem('userSettings', JSON.stringify(newSettings));
           
-          // Apply settings changes
-          get().applySettings?.(newSettings);
+          // Save to backend
+          try {
+            await settingsApi.updateSettings(newSettings);
+            console.log('Settings saved to backend successfully');
+          } catch (backendError) {
+            console.warn('Failed to save settings to backend:', backendError);
+            // Settings are still saved locally, so the user experience isn't affected
+          }
           
           console.log('Settings updated:', updates);
         } catch (error) {
@@ -165,9 +177,24 @@ export const useSettingsStore = create<SettingsStore>()(
       resetSettings: async () => {
         set({ isSaving: true });
         try {
+          // Update local state immediately
           set({ settings: defaultSettings });
-          localStorage.setItem('userSettings', JSON.stringify(defaultSettings));
+          
+          // Apply settings changes immediately
           get().applySettings(defaultSettings);
+          
+          // Save to localStorage as backup
+          localStorage.setItem('userSettings', JSON.stringify(defaultSettings));
+          
+          // Reset on backend
+          try {
+            await settingsApi.resetSettings();
+            console.log('Settings reset on backend successfully');
+          } catch (backendError) {
+            console.warn('Failed to reset settings on backend:', backendError);
+            // Settings are still reset locally
+          }
+          
           console.log('Settings reset to defaults');
         } catch (error) {
           console.error('Error resetting settings:', error);
@@ -177,8 +204,37 @@ export const useSettingsStore = create<SettingsStore>()(
       },
       
       loadSettings: async () => {
-        set({ isLoading: true });
+        const currentState = get();
+        
+        // Debounce mechanism to prevent multiple rapid calls
+        const now = Date.now();
+        if (now - currentState.lastLoadTime < 2000) { // 2 seconds debounce
+          console.log('Skipping settings load - too soon since last load');
+          return;
+        }
+        
+        // Prevent loading if already loading
+        if (currentState.isLoading) {
+          console.log('Settings already loading, skipping');
+          return;
+        }
+        
+        set({ lastLoadTime: now, isLoading: true });
+        
         try {
+          // Check if user is authenticated before making API calls
+          const token = localStorage.getItem('token');
+          if (!token) {
+            console.log('No token found, loading settings from localStorage');
+            const savedSettings = localStorage.getItem('userSettings');
+            if (savedSettings) {
+              const parsedSettings = JSON.parse(savedSettings);
+              set({ settings: parsedSettings });
+              get().applySettings(parsedSettings);
+            }
+            return;
+          }
+
           // Try to load from backend first
           try {
             const response = await settingsApi.getSettings();
@@ -188,8 +244,14 @@ export const useSettingsStore = create<SettingsStore>()(
               console.log('Settings loaded from backend');
               return;
             }
-          } catch (backendError) {
-            console.log('Backend settings not available, loading from localStorage');
+          } catch (backendError: any) {
+            // Handle 401 errors specifically
+            if (backendError.response?.status === 401) {
+              console.log('Authentication failed, loading settings from localStorage');
+              localStorage.removeItem('token');
+            } else {
+              console.log('Backend settings not available, loading from localStorage');
+            }
           }
           
           // Fallback to localStorage
@@ -211,12 +273,23 @@ export const useSettingsStore = create<SettingsStore>()(
         try {
           const settings = get().settings;
           
-          // Save to backend
-          try {
-            await settingsApi.updateSettings(settings);
-            console.log('Settings saved to backend');
-          } catch (backendError) {
-            console.log('Backend save failed, saving to localStorage only');
+          // Check if user is authenticated before saving to backend
+          const token = localStorage.getItem('token');
+          if (token) {
+            // Save to backend
+            try {
+              await settingsApi.updateSettings(settings);
+              console.log('Settings saved to backend');
+            } catch (backendError: any) {
+              if (backendError.response?.status === 401) {
+                console.log('Authentication failed, saving to localStorage only');
+                localStorage.removeItem('token');
+              } else {
+                console.log('Backend save failed, saving to localStorage only');
+              }
+            }
+          } else {
+            console.log('No token found, saving to localStorage only');
           }
           
           // Also save to localStorage as backup
@@ -231,36 +304,36 @@ export const useSettingsStore = create<SettingsStore>()(
       },
       
       // Individual setting update methods
-      updateMessageSettings: (settings) => {
-        get().updateSettings(settings);
+      updateMessageSettings: async (settings) => {
+        await get().updateSettings(settings);
       },
       
-      updateAISettings: (settings) => {
-        get().updateSettings(settings);
+      updateAISettings: async (settings) => {
+        await get().updateSettings(settings);
       },
       
-      updateWhatsAppSettings: (settings) => {
-        get().updateSettings(settings);
+      updateWhatsAppSettings: async (settings) => {
+        await get().updateSettings(settings);
       },
       
-      updateNotificationSettings: (settings) => {
-        get().updateSettings(settings);
+      updateNotificationSettings: async (settings) => {
+        await get().updateSettings(settings);
       },
       
-      updateRegionalSettings: (settings) => {
-        get().updateSettings(settings);
+      updateRegionalSettings: async (settings) => {
+        await get().updateSettings(settings);
       },
       
-      updatePerformanceSettings: (settings) => {
-        get().updateSettings(settings);
+      updatePerformanceSettings: async (settings) => {
+        await get().updateSettings(settings);
       },
       
-      updateSecuritySettings: (settings) => {
-        get().updateSettings(settings);
+      updateSecuritySettings: async (settings) => {
+        await get().updateSettings(settings);
       },
       
-      updateUISettings: (settings) => {
-        get().updateSettings(settings);
+      updateUISettings: async (settings) => {
+        await get().updateSettings(settings);
       },
       
       // Apply settings to the application

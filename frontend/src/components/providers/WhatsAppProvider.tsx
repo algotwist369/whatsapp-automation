@@ -18,23 +18,18 @@ export function WhatsAppProvider({ children }: WhatsAppProviderProps) {
   useEffect(() => {
     if (socket) {
       setSocket(socket);
-      console.log('🔌 Socket set up for WhatsApp real-time updates');
+      console.log('🔌Socket set up for WhatsApp real-time updates');
     }
   }, [socket, setSocket]);
 
   useEffect(() => {
     // Only fetch WhatsApp status if user is authenticated
     if (isAuthenticated && !authLoading) {
+      console.log('WhatsApp Provider: Fetching initial status...');
       fetchStatus();
 
-      // Minimal polling since we have real-time updates via WebSocket
-      const interval = setInterval(() => {
-        if (isAuthenticated) {
-          fetchStatus();
-        }
-      }, 60000); // Poll every 60 seconds as fallback
-
-      return () => clearInterval(interval);
+      // No periodic polling - rely on WebSocket for real-time updates
+      // Only fetch status once on mount, then let WebSocket handle updates
     }
   }, [fetchStatus, isAuthenticated, authLoading]);
 

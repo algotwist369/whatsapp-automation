@@ -86,13 +86,16 @@ export interface SpamAnalysis {
   originalMessage: string;
   isSpam: boolean;
   spamWords: string[];
-  replacements: Array<{
+  replacements?: Array<{
     original: string;
     replacement: string;
     reason: string;
   }>;
   rewrittenMessage: string;
   confidence: number;
+  complianceScore?: number;
+  riskLevel?: string;
+  spamScore?: number;
 }
 
 export interface WhatsAppConnection {

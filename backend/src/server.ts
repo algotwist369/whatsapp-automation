@@ -207,6 +207,8 @@ io.on('connection', (socket: any) => {
     console.log(`📡 User ${userId} joined their room`);
   });
 
+  // Removed automatic status request handler - WebSocket events handle status updates
+
   socket.on('disconnect', (reason) => {
     console.log('🔌 Client disconnected:', socket.id, 'Reason:', reason);
   });
@@ -332,12 +334,33 @@ const gracefulShutdown = (signal: string) => {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
+// Initialize WhatsApp service after database connection
+const initializeServices = async () => {
+  try {
+    // Import WhatsApp service
+    const whatsappService = (await import('./services/whatsappService')).default;
+    
+    // Set Socket.IO instance
+    whatsappService.setSocketIO(io);
+    
+    // Initialize WhatsApp service to restore connections
+    await whatsappService.initialize();
+    
+    console.log('✅ All services initialized successfully');
+  } catch (error) {
+    console.error('❌ Error initializing services:', error);
+  }
+};
+
 // Start server
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📱 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+  
+  // Initialize services after server starts
+  await initializeServices();
 });
 
 export default app;

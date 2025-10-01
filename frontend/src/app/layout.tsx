@@ -5,6 +5,7 @@ import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from '@/components/providers/AuthProvider';
 import { WhatsAppProvider } from '@/components/providers/WhatsAppProvider';
 import ErrorBoundary from '@/components/ErrorBoundary';
+import { SettingsProvider } from '@/components/providers/SettingsProvider';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -30,9 +31,11 @@ export default function RootLayout({
       <body className={inter.className}>
         <ErrorBoundary>
           <AuthProvider>
-            <WhatsAppProvider>
-              {children}
-            </WhatsAppProvider>
+            <SettingsProvider>
+              <WhatsAppProvider>
+                {children}
+              </WhatsAppProvider>
+            </SettingsProvider>
           </AuthProvider>
         </ErrorBoundary>
         <Toaster

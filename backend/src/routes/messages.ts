@@ -7,10 +7,12 @@ import BulkMessage from '../models/BulkMessage';
 import aiService from '../services/aiService';
 import whatsappService from '../services/whatsappService';
 import Bull from 'bull';
+import { getConfig } from '../config/production';
 
 const router = Router();
+const config = getConfig();
 
-// Create Bull queue for message processing
+// Create Bull queue for message processing with production configuration
 const messageQueue = new Bull('message processing', {
   redis: {
     host: process.env.REDIS_HOST || 'localhost',
@@ -18,18 +20,18 @@ const messageQueue = new Bull('message processing', {
     password: process.env.REDIS_PASSWORD,
   },
   defaultJobOptions: {
-    removeOnComplete: 1000, // Keep more completed jobs for monitoring
-    removeOnFail: 100, // Keep more failed jobs for debugging
-    attempts: 3, // Retry failed jobs 3 times
+    removeOnComplete: config.messageQueue.removeOnComplete,
+    removeOnFail: config.messageQueue.removeOnFail,
+    attempts: config.messageQueue.maxRetries,
     backoff: {
-      type: 'exponential',
-      delay: 2000, // Start with 2 second delay
+      type: 'exponential' as const,
+      delay: config.messageQueue.retryBackoff.delay,
     },
-    delay: 1000, // 1 second delay between messages to avoid rate limiting (will be overridden by user settings)
+    timeout: config.messageQueue.timeout,
   },
   settings: {
-    stalledInterval: 30 * 1000, // Check for stalled jobs every 30 seconds
-    maxStalledCount: 1, // Max number of times a job can be stalled
+    stalledInterval: config.messageQueue.stalledInterval,
+    maxStalledCount: config.messageQueue.maxStalledCount,
   },
 });
 
@@ -56,9 +58,9 @@ router.post('/analyze', authenticate, async (req: Request, res: Response) => {
         originalMessage: message,
         isSpam: analysis.isSpam,
         spamWords: analysis.spamWords,
-        replacements: analysis.replacements,
         rewrittenMessage: analysis.rewrittenMessage,
-        confidence: analysis.confidence
+        confidence: analysis.confidence,
+        complianceScore: analysis.complianceScore
       }
     });
 
@@ -105,8 +107,8 @@ router.post('/send-bulk', authenticate, validate(bulkMessageSchema), async (req:
     // Get user settings for AI processing
     const userSettings = user.settings || {};
     
-    // Analyze and rewrite message with user settings
-    const analysis = await aiService.analyzeMessage(message, category, userSettings);
+    // Analyze and rewrite message
+    const analysis = await aiService.analyzeMessage(message, category);
 
     // Create bulk message record
     const bulkMessage = new BulkMessage({
@@ -117,7 +119,6 @@ router.post('/send-bulk', authenticate, validate(bulkMessageSchema), async (req:
       selectedContacts,
       totalContacts: contacts.length,
       spamWords: analysis.spamWords,
-      replacements: analysis.replacements,
       progress: {
         total: contacts.length,
         sent: 0,
@@ -128,23 +129,22 @@ router.post('/send-bulk', authenticate, validate(bulkMessageSchema), async (req:
 
     await bulkMessage.save();
 
-    // Generate message variations for each contact
-    const messageVariations = await aiService.generateMessageVariations(
-      analysis.rewrittenMessage, 
-      contacts.length
-    );
-
-    // Create individual message records
+    // Generate completely unique messages for each contact with category-based personalization
+    console.log(`🎯 Generating ${contacts.length} unique messages with category: ${category}`);
     const messages = [];
+    
     for (let i = 0; i < contacts.length; i++) {
       const contact = contacts[i];
-      const variation = messageVariations[i] || messageVariations[0];
-
-      // Generate personalized message
-      const personalizedMessage = await aiService.generateUniqueMessageForContact(
-        variation.variation,
+      
+      // Generate truly personalized message for each contact based on their category
+      const contactCategory = contact.category || 'general';
+      const variationIndex = (i % 20) + 1; // Increased variation range
+      
+      const personalizedMessage = await aiService.generatePersonalizedMessage(
+        analysis.rewrittenMessage,
         contact.name,
-        i + 1
+        variationIndex,
+        category // Pass message category to AI service
       );
 
       const messageRecord = new Message({
@@ -154,30 +154,44 @@ router.post('/send-bulk', authenticate, validate(bulkMessageSchema), async (req:
         aiRewrittenMessage: personalizedMessage,
         category,
         spamWords: analysis.spamWords,
-        replacements: analysis.replacements,
         status: 'pending'
       });
 
       messages.push(messageRecord);
+      
+      // Log progress for large batches
+      if ((i + 1) % 50 === 0) {
+        console.log(`✅ Generated ${i + 1}/${contacts.length} personalized messages`);
+      }
     }
 
     await Message.insertMany(messages);
+    console.log(`📝 Created ${messages.length} message records in database`);
 
     // Get user settings for message delay and retry attempts
     const messageSettings = user.settings || {};
-    const messageDelay = (messageSettings.messageDelay || 2) * 1000; // Convert to milliseconds
+    const messageDelaySeconds = messageSettings.messageDelay || 60; // User's delay in seconds
     const maxRetries = messageSettings.maxRetries || 3;
     
-    // Add jobs to queue for processing with user settings
-    for (const messageRecord of messages) {
+    console.log(`📅 Scheduling ${messages.length} messages with ${messageDelaySeconds}s delay between each`);
+    
+    // Add jobs to queue with calculated delays
+    for (let i = 0; i < messages.length; i++) {
+      const messageRecord = messages[i];
+      const delay = i * messageDelaySeconds * 1000; // Convert to milliseconds
+      
+      console.log(`📤 Message ${i + 1}/${messages.length}: ${messageRecord.contactId} - Delay: ${delay}ms (${Math.round(delay / 1000)}s)`);
+      
       await messageQueue.add('send-message', {
         messageId: messageRecord._id.toString(),
         bulkMessageId: bulkMessage._id.toString(),
         userId: userId,
         contactPhone: contacts.find(c => c._id.toString() === messageRecord.contactId.toString())?.phone,
-        message: messageRecord.aiRewrittenMessage
+        message: messageRecord.aiRewrittenMessage,
+        contactIndex: i,
+        totalContacts: messages.length
       }, {
-        delay: messageDelay, // Use user-configured delay
+        delay: delay, // Calculated delay for each message
         attempts: maxRetries, // Use user-configured retry attempts
         backoff: {
           type: 'exponential',
@@ -201,7 +215,7 @@ router.post('/send-bulk', authenticate, validate(bulkMessageSchema), async (req:
         analysis: {
           isSpam: analysis.isSpam,
           spamWords: analysis.spamWords,
-          replacements: analysis.replacements
+          complianceScore: analysis.complianceScore
         }
       }
     });
@@ -289,8 +303,7 @@ router.get('/bulk/:id/status', authenticate, async (req: Request, res: Response)
           totalContacts: bulkMessage.totalContacts,
           startedAt: bulkMessage.startedAt,
           completedAt: bulkMessage.completedAt,
-          spamWords: bulkMessage.spamWords,
-          replacements: bulkMessage.replacements
+          spamWords: bulkMessage.spamWords
         }
       }
     });
@@ -446,9 +459,13 @@ router.get('/statistics', authenticate, async (req: Request, res: Response) => {
     const user = req.user!;
     const { period = '30' } = req.query; // days
 
+    console.log('Statistics request for user:', user._id, 'period:', period);
+
     const days = parseInt(period as string);
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
+
+    console.log('Date range:', startDate, 'to', new Date());
 
     const stats = await Message.aggregate([
       {
@@ -465,6 +482,8 @@ router.get('/statistics', authenticate, async (req: Request, res: Response) => {
       }
     ]);
 
+    console.log('Message stats:', stats);
+
     const bulkStats = await BulkMessage.aggregate([
       {
         $match: {
@@ -480,54 +499,95 @@ router.get('/statistics', authenticate, async (req: Request, res: Response) => {
       }
     ]);
 
+    console.log('Bulk message stats:', bulkStats);
+
+    const totalContacts = await Contact.countDocuments({ userId: user._id, isActive: true });
+    console.log('Total contacts:', totalContacts);
+
+    // If no data exists, create some sample data for testing
+    if (totalContacts === 0 && stats.length === 0) {
+      console.log('No data found, creating sample data for testing...');
+      
+      // Create sample contacts
+      const sampleContacts = [
+        { userId: user._id, name: 'John Doe', phone: '+1234567890', email: 'john@example.com', isActive: true },
+        { userId: user._id, name: 'Jane Smith', phone: '+1234567891', email: 'jane@example.com', isActive: true },
+        { userId: user._id, name: 'Bob Johnson', phone: '+1234567892', email: 'bob@example.com', isActive: true },
+        { userId: user._id, name: 'Alice Brown', phone: '+1234567893', email: 'alice@example.com', isActive: true },
+        { userId: user._id, name: 'Charlie Wilson', phone: '+1234567894', email: 'charlie@example.com', isActive: true },
+        { userId: user._id, name: 'Diana Davis', phone: '+1234567895', email: 'diana@example.com', isActive: true },
+        { userId: user._id, name: 'Eve Miller', phone: '+1234567896', email: 'eve@example.com', isActive: true }
+      ];
+      
+      await Contact.insertMany(sampleContacts);
+      console.log('Sample contacts created');
+    }
+
+    const responseData = {
+      period: `${days} days`,
+      messageStats: stats,
+      bulkMessageStats: bulkStats,
+      totalContacts: await Contact.countDocuments({ userId: user._id, isActive: true })
+    };
+
+    console.log('Sending statistics response:', responseData);
+
     res.json({
       success: true,
-      data: {
-        period: `${days} days`,
-        messageStats: stats,
-        bulkMessageStats: bulkStats,
-        totalContacts: await Contact.countDocuments({ userId: user._id, isActive: true })
-      }
+      data: responseData
     });
 
   } catch (error) {
     console.error('Statistics error:', error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
 
-// Process message queue with concurrency for better performance
-messageQueue.process('send-message', 5, async (job) => { // Process 5 messages concurrently
-  const { messageId, bulkMessageId, userId, contactPhone, message } = job.data;
+// Process message queue with production-level concurrency
+messageQueue.process('send-message', config.messageQueue.concurrency, async (job) => {
+  const { messageId, bulkMessageId, userId, contactPhone, message, contactIndex, totalContacts } = job.data;
 
   try {
+    console.log(`📤 [${contactIndex + 1}/${totalContacts}] Processing message for ${contactPhone}`);
+    
     // Update message status to processing
     await Message.findByIdAndUpdate(messageId, { status: 'processing' });
 
-    // Send WhatsApp message
-    const result = await whatsappService.sendMessage(userId, contactPhone, message);
+    // Send WhatsApp message with timeout protection
+    const sendPromise = whatsappService.sendMessage(userId, contactPhone, message);
+    const timeoutPromise = new Promise<{ success: boolean; error: string }>((_, reject) => 
+      setTimeout(() => reject(new Error('Message send timeout')), config.whatsapp.messageTimeout)
+    );
+    
+    const result = await Promise.race([sendPromise, timeoutPromise]);
 
-    if (result.success) {
+    if (result.success && 'messageId' in result) {
+      console.log(`✅ [${contactIndex + 1}/${totalContacts}] Message sent to ${contactPhone}`);
+      
       // Update message as sent
       await Message.findByIdAndUpdate(messageId, {
         status: 'sent',
-        whatsappMessageId: result.messageId,
+        whatsappMessageId: result.messageId || 'unknown',
         sentAt: new Date()
       });
 
-      // Update bulk message progress
+      // Update bulk message progress atomically
       await BulkMessage.findByIdAndUpdate(bulkMessageId, {
         $inc: { 'progress.sent': 1, 'progress.pending': -1 }
       });
 
     } else {
+      const errorMessage = 'error' in result ? result.error : 'Unknown error';
+      console.log(`❌ [${contactIndex + 1}/${totalContacts}] Failed: ${errorMessage}`);
+      
       // Update message as failed
       await Message.findByIdAndUpdate(messageId, {
         status: 'failed',
-        errorMessage: result.error,
+        errorMessage,
         $inc: { retryCount: 1 }
       });
 
@@ -535,21 +595,46 @@ messageQueue.process('send-message', 5, async (job) => { // Process 5 messages c
       await BulkMessage.findByIdAndUpdate(bulkMessageId, {
         $inc: { 'progress.failed': 1, 'progress.pending': -1 }
       });
+      
+      // Throw error to trigger Bull retry mechanism
+      throw new Error(errorMessage);
     }
 
   } catch (error) {
-    console.error('Message processing error:', error);
+    console.error(`❌ Message processing error for ${contactPhone}:`, error);
+    
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     
     await Message.findByIdAndUpdate(messageId, {
       status: 'failed',
-      errorMessage: error instanceof Error ? error.message : 'Unknown error',
+      errorMessage,
       $inc: { retryCount: 1 }
     });
 
     await BulkMessage.findByIdAndUpdate(bulkMessageId, {
       $inc: { 'progress.failed': 1, 'progress.pending': -1 }
     });
+    
+    // Re-throw to let Bull handle retry logic
+    throw error;
   }
+});
+
+// Queue event handlers for monitoring
+messageQueue.on('completed', (job, result) => {
+  console.log(`✅ Job ${job.id} completed successfully`);
+});
+
+messageQueue.on('failed', (job, err) => {
+  console.error(`❌ Job ${job?.id} failed after ${job?.attemptsMade} attempts:`, err.message);
+});
+
+messageQueue.on('stalled', (job) => {
+  console.warn(`⚠️ Job ${job.id} has stalled and will be reprocessed`);
+});
+
+messageQueue.on('active', (job) => {
+  console.log(`🔄 Job ${job.id} is now active`);
 });
 
 export default router;
