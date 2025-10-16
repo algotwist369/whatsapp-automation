@@ -576,9 +576,20 @@ messageQueue.process('send-message', config.messageQueue.concurrency, async (job
       });
 
       // Update bulk message progress atomically
-      await BulkMessage.findByIdAndUpdate(bulkMessageId, {
-        $inc: { 'progress.sent': 1, 'progress.pending': -1 }
-      });
+      const bulkMsg = await BulkMessage.findByIdAndUpdate(
+        bulkMessageId, 
+        { $inc: { 'progress.sent': 1, 'progress.pending': -1 } },
+        { new: true }
+      );
+
+      // Check if campaign is complete
+      if (bulkMsg && bulkMsg.progress.pending === 0) {
+        await BulkMessage.findByIdAndUpdate(bulkMessageId, {
+          status: 'completed',
+          completedAt: new Date()
+        });
+        console.log(`🎉 Campaign ${bulkMessageId} completed! Sent: ${bulkMsg.progress.sent}, Failed: ${bulkMsg.progress.failed}`);
+      }
 
     } else {
       const errorMessage = 'error' in result ? result.error : 'Unknown error';
@@ -592,9 +603,20 @@ messageQueue.process('send-message', config.messageQueue.concurrency, async (job
       });
 
       // Update bulk message progress
-      await BulkMessage.findByIdAndUpdate(bulkMessageId, {
-        $inc: { 'progress.failed': 1, 'progress.pending': -1 }
-      });
+      const bulkMsg = await BulkMessage.findByIdAndUpdate(
+        bulkMessageId,
+        { $inc: { 'progress.failed': 1, 'progress.pending': -1 } },
+        { new: true }
+      );
+
+      // Check if campaign is complete (even with failures)
+      if (bulkMsg && bulkMsg.progress.pending === 0) {
+        await BulkMessage.findByIdAndUpdate(bulkMessageId, {
+          status: 'completed',
+          completedAt: new Date()
+        });
+        console.log(`🎉 Campaign ${bulkMessageId} completed with some failures. Sent: ${bulkMsg.progress.sent}, Failed: ${bulkMsg.progress.failed}`);
+      }
       
       // Throw error to trigger Bull retry mechanism
       throw new Error(errorMessage);
@@ -611,9 +633,20 @@ messageQueue.process('send-message', config.messageQueue.concurrency, async (job
       $inc: { retryCount: 1 }
     });
 
-    await BulkMessage.findByIdAndUpdate(bulkMessageId, {
-      $inc: { 'progress.failed': 1, 'progress.pending': -1 }
-    });
+    const bulkMsg = await BulkMessage.findByIdAndUpdate(
+      bulkMessageId,
+      { $inc: { 'progress.failed': 1, 'progress.pending': -1 } },
+      { new: true }
+    );
+
+    // Check if campaign is complete (even with failures in catch block)
+    if (bulkMsg && bulkMsg.progress.pending === 0) {
+      await BulkMessage.findByIdAndUpdate(bulkMessageId, {
+        status: 'completed',
+        completedAt: new Date()
+      });
+      console.log(`🎉 Campaign ${bulkMessageId} completed (with errors). Sent: ${bulkMsg.progress.sent}, Failed: ${bulkMsg.progress.failed}`);
+    }
     
     // Re-throw to let Bull handle retry logic
     throw error;

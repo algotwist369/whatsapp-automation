@@ -14,12 +14,14 @@ import {
   Bars3Icon,
   XMarkIcon,
   DevicePhoneMobileIcon,
+  ChatBubbleOvalLeftEllipsisIcon,
 } from '@heroicons/react/24/outline';
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
   { name: 'Contacts', href: '/contacts', icon: UserGroupIcon },
   { name: 'Bulk Messages', href: '/messages', icon: ChatBubbleLeftRightIcon },
+  { name: 'Auto-Reply', href: '/auto-reply', icon: ChatBubbleOvalLeftEllipsisIcon },
   { name: 'WhatsApp', href: '/whatsapp', icon: DevicePhoneMobileIcon },
   { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
   { name: 'Settings', href: '/settings', icon: CogIcon },

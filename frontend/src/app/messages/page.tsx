@@ -45,7 +45,7 @@ export default function MessagesPage() {
   } = useForm<BulkMessageFormData>({
     defaultValues: {
       message: '',
-      category: 'other',
+      category: 'promotional', // Changed from 'other' to 'promotional'
       selectedContacts: [],
     },
   });
@@ -331,14 +331,34 @@ export default function MessagesPage() {
               </div>
               <div className="card-body">
                 <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-                  {/* Category Selection */}
-                  <SelectField
-                    label="Message Category"
-                    options={categories}
-                    register={register('category', { required: 'Category is required' })}
-                    error={errors.category?.message}
-                    required
-                  />
+                  {/* Category Selection - Prominent */}
+                  <div className="bg-blue-50 border-2 border-blue-300 rounded-lg p-4">
+                    <div className="flex items-center space-x-2 mb-3">
+                      <span className="text-2xl">🎯</span>
+                      <div>
+                        <label className="block text-sm font-bold text-blue-900">
+                          Select Message Category
+                          <span className="text-red-500 ml-1">*</span>
+                        </label>
+                        <p className="text-xs text-blue-700 mt-0.5">
+                          This helps AI personalize messages for better engagement
+                        </p>
+                      </div>
+                    </div>
+                    <select
+                      {...register('category', { required: 'Category is required' })}
+                      className="block w-full rounded-md border-blue-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base font-medium"
+                    >
+                      {categories.map(cat => (
+                        <option key={cat.value} value={cat.value}>
+                          {cat.label}
+                        </option>
+                      ))}
+                    </select>
+                    {errors.category?.message && (
+                      <p className="mt-1 text-sm text-red-600">{errors.category.message}</p>
+                    )}
+                  </div>
 
                   {/* Message Text */}
                   <div>

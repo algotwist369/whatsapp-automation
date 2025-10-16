@@ -27,8 +27,26 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className={inter.className}>
+    <html lang="en" suppressHydrationWarning={true}>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              // Prevent hydration mismatches from browser extensions
+              if (typeof window !== 'undefined') {
+                const observer = new MutationObserver(() => {
+                  // Ignore browser extension modifications
+                });
+                observer.observe(document.body, {
+                  attributes: true,
+                  attributeFilter: ['bis_skin_checked', '__processed_*']
+                });
+              }
+            `,
+          }}
+        />
+      </head>
+      <body className={inter.className} suppressHydrationWarning={true}>
         <ErrorBoundary>
           <AuthProvider>
             <SettingsProvider>

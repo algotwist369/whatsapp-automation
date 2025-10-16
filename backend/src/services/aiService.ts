@@ -125,16 +125,16 @@ CRITICAL RULES:
 8. DO NOT use: "urgent", "limited time", "act now", "buy now", "click here", "guaranteed", "free money", "congratulations", "winner", "amazing", "incredible"
 
 Return ONLY valid JSON in this exact format:
-{
+{{
   "isSpam": boolean,
   "spamWords": ["word1", "word2"],
   "rewrittenMessage": "professionally rewritten version",
   "confidence": 0.95,
   "complianceScore": 88,
   "replacements": [
-    {"original": "urgent", "replacement": "important", "reason": "Less aggressive"}
+    {{"original": "urgent", "replacement": "important", "reason": "Less aggressive"}}
   ]
-}`,
+}}`,
       inputVariables: ['message', 'category'],
     });
 
@@ -534,6 +534,304 @@ Output only the personalized message.`,
 
     const variationFunc = variations[variationIndex % variations.length];
     return variationFunc(message);
+  }
+
+  // Auto-reply specific methods
+  async generateAutoReply(
+    incomingMessage: string,
+    contactName: string,
+    contextData: any,
+    personality: 'professional' | 'friendly' | 'casual' | 'formal' = 'professional',
+    includeGreeting: boolean = true,
+    includeClosing: boolean = true,
+    conversationHistory: Array<{ role: string; content: string; timestamp: Date }> = []
+  ): Promise<{
+    response: string;
+    confidence: number;
+    processingTime: number;
+  }> {
+    const startTime = Date.now();
+    
+    try {
+      if (!this.llm) {
+        return {
+          response: this.generateFallbackReply(incomingMessage, contactName, personality),
+          confidence: 0.3,
+          processingTime: Date.now() - startTime
+        };
+      }
+
+      const prompt = this.buildAutoReplyPrompt(
+        incomingMessage,
+        contactName,
+        contextData,
+        personality,
+        includeGreeting,
+        includeClosing,
+        conversationHistory
+      );
+
+      const response = await this.llm.invoke(prompt);
+      let reply = response.content as string;
+
+      // Clean up the response
+      reply = this.cleanupAutoReply(reply, contactName);
+
+      return {
+        response: reply,
+        confidence: 0.85,
+        processingTime: Date.now() - startTime
+      };
+
+    } catch (error) {
+      console.error('Error generating auto-reply:', error);
+      return {
+        response: this.generateFallbackReply(incomingMessage, contactName, personality),
+        confidence: 0.3,
+        processingTime: Date.now() - startTime
+      };
+    }
+  }
+
+  private buildAutoReplyPrompt(
+    incomingMessage: string,
+    contactName: string,
+    contextData: any,
+    personality: string,
+    includeGreeting: boolean,
+    includeClosing: boolean,
+    conversationHistory: Array<{ role: string; content: string; timestamp: Date }> = []
+  ): string {
+    const personalityInstructions = {
+      professional: 'Use a professional, business-like tone. Be polite and formal.',
+      friendly: 'Use a warm, friendly tone. Be approachable and conversational.',
+      casual: 'Use a casual, relaxed tone. Be informal but respectful.',
+      formal: 'Use a very formal, official tone. Be extremely polite and structured.'
+    };
+
+    // Build conversation context if available
+    let conversationContext = '';
+    if (conversationHistory && conversationHistory.length > 0) {
+      conversationContext = '\n\nPREVIOUS CONVERSATION (for context only - DO NOT repeat information):\n';
+      conversationHistory.slice(-4).forEach(msg => { // Only last 4 messages
+        const role = msg.role === 'user' ? 'Customer' : 'You';
+        conversationContext += `${role}: ${msg.content}\n`;
+      });
+      conversationContext += '\nNOTE: Customer remembers previous conversation. DO NOT repeat yourself or greet again if you already did.';
+    }
+
+    // Detect customer intent
+    const messageLower = incomingMessage.toLowerCase();
+    const isHesitant = messageLower.includes('maybe') || messageLower.includes('thinking') || messageLower.includes('not sure') || messageLower.includes('expensive') || messageLower.includes('costly');
+    const isNotInterested = messageLower.includes('not interested') || messageLower.includes('no thanks') || messageLower.includes('not now') || (messageLower.includes('no') && messageLower.split(' ').length < 5);
+    
+    let specialInstructions = '';
+    if (isNotInterested) {
+      specialInstructions = '\n\n⚠️ CUSTOMER NOT INTERESTED: Politely thank them, wish them well, mention they can visit https://spaadvisor.in/ for future reference, and gracefully end conversation. Keep it SHORT and respectful.';
+    } else if (isHesitant) {
+      specialInstructions = '\n\n💡 CUSTOMER HESITANT: Gently highlight benefits, mention special offers if applicable, address their concern positively, but don\'t be pushy. Keep it brief and helpful.';
+    }
+
+    return `You are a professional spa consultant responding via WhatsApp. Generate SHORT, PROFESSIONAL, PERSUASIVE responses.
+
+INCOMING MESSAGE: "${incomingMessage}"
+CONTACT NAME: "${contactName}"
+PERSONALITY: ${personalityInstructions[personality as keyof typeof personalityInstructions]}
+${conversationContext}${specialInstructions}
+
+CONTEXT DATA:
+- Messages exchanged: ${contextData.previousMessages || 0}
+- Customer category: ${contextData.contactCategory || 'general'}
+
+CONVERSATION STRATEGY:
+1. UNDERSTAND: First understand what customer needs
+2. EXTRACT KEY INFO: Focus on important details (service type, budget, timing, location)
+3. PROVIDE VALUE: Give useful, relevant information
+4. PERSUADE GENTLY: If hesitant, mention benefits/offers without being pushy
+5. GRACEFUL EXIT: If not interested, politely say goodbye and mention website
+
+RESPONSE RULES:
+1. Keep SHORT (80-120 chars ideal, MAX 150)
+2. Be DIRECT and USEFUL
+3. ${conversationHistory.length > 0 ? 'Continue naturally - NO repeat greeting' : includeGreeting ? `Brief greeting: "Hi ${contactName}!"` : 'Skip greeting'}
+4. If INFO NOT AVAILABLE: Politely say "For detailed info, visit https://spaadvisor.in/ or call us!"
+5. For HESITANT customers: Briefly mention benefits/offers, ask if they want to know more
+6. For NOT INTERESTED: "No problem! Visit https://spaadvisor.in/ anytime. Have a great day! 🙏" and STOP
+7. Use bullet points (•) for lists
+8. NO repetition
+9. Sound natural, like WhatsApp chat
+10. End with engaging question (unless customer said NO)
+
+EXAMPLES:
+Query: "thai massage price"
+✅ "Thai: 60min ₹2199, 90min ₹3199. Traditional stretching + acupressure. Interested?"
+
+Hesitant: "expensive"
+✅ "We have packages from ₹1499! Plus first-visit 20% off. Great value for wellness. Worth trying?"
+
+Not interested: "no thanks"
+✅ "No problem! Visit https://spaadvisor.in/ anytime. Have a wonderful day! 🙏"
+
+Info not available: "special facial treatment"
+✅ "For detailed facial options, please visit https://spaadvisor.in/ or call us. We'll help you find perfect treatment!"
+
+Generate SHORT, PROFESSIONAL, PERSUASIVE response!`;
+  }
+
+  private generateFallbackReply(
+    incomingMessage: string,
+    contactName: string,
+    personality: string
+  ): string {
+    const greetings = {
+      professional: `Hello ${contactName}`,
+      friendly: `Hi ${contactName}`,
+      casual: `Hey ${contactName}`,
+      formal: `Dear ${contactName}`
+    };
+
+    const closings = {
+      professional: 'Best regards',
+      friendly: 'Thanks!',
+      casual: 'Cheers!',
+      formal: 'Sincerely'
+    };
+
+    const greeting = greetings[personality as keyof typeof greetings];
+    const closing = closings[personality as keyof typeof closings];
+
+    // Simple keyword-based responses
+    const message = incomingMessage.toLowerCase();
+    
+    if (message.includes('hello') || message.includes('hi') || message.includes('hey')) {
+      return `${greeting}! How can I help you today? ${closing}`;
+    }
+    
+    if (message.includes('price') || message.includes('cost')) {
+      return `${greeting}! I'd be happy to provide pricing information. Let me get the details for you. ${closing}`;
+    }
+    
+    if (message.includes('service') || message.includes('help')) {
+      return `${greeting}! I'm here to help. What specific service are you interested in? ${closing}`;
+    }
+    
+    if (message.includes('?')) {
+      return `${greeting}! That's a great question. Let me provide you with the information you need. ${closing}`;
+    }
+    
+    return `${greeting}! Thank you for your message. I'll get back to you with more information. ${closing}`;
+  }
+
+  private cleanupAutoReply(reply: string, contactName: string): string {
+    let cleaned = reply;
+
+    // Remove common AI artifacts
+    cleaned = cleaned
+      .replace(/^["']|["']$/g, '') // Remove surrounding quotes
+      .replace(/\s*\[.*?\]\s*$/g, '') // Remove trailing brackets
+      .replace(/^\s*-\s*/gm, '') // Remove leading dashes
+      .replace(/\s+/g, ' ') // Replace multiple spaces with single space
+      .trim();
+
+    // Remove overly polite/lengthy phrases to keep it short
+    cleaned = cleaned
+      .replace(/Thank you (?:so much|very much) for (?:your|the) message[.!]?\s*/gi, '')
+      .replace(/I(?:'d| would) be (?:happy|glad|delighted) to (?:help|assist)(?: you)?[.!]?\s*/gi, '')
+      .replace(/Please (?:feel free to|don't hesitate to)\s+/gi, '')
+      .replace(/(?:Is there anything else|Anything else) (?:I can help you with|that I can do for you)[?]?\s*/gi, '');
+
+    // Ensure contact name is used appropriately (max 1 time for brevity)
+    const nameCount = (cleaned.match(new RegExp(contactName, 'gi')) || []).length;
+    if (nameCount > 1) {
+      // Remove excess name mentions (keep only first occurrence)
+      let count = 0;
+      cleaned = cleaned.replace(new RegExp(contactName, 'gi'), (match) => {
+        count++;
+        return count === 1 ? match : '';
+      });
+    }
+
+    // Enforce maximum length (250 chars for WhatsApp brevity)
+    if (cleaned.length > 250) {
+      // Try to cut at sentence boundary
+      const sentences = cleaned.match(/[^.!?]+[.!?]+/g) || [cleaned];
+      let truncated = '';
+      for (const sentence of sentences) {
+        if ((truncated + sentence).length <= 247) {
+          truncated += sentence;
+        } else {
+          break;
+        }
+      }
+      if (truncated.length > 50) {
+        cleaned = truncated.trim();
+      } else {
+        cleaned = cleaned.substring(0, 247) + '...';
+      }
+    }
+
+    return cleaned;
+  }
+
+  async findBestReplyMatch(
+    incomingMessage: string,
+    replyData: Array<{ key: string; value: string; priority?: number }>
+  ): Promise<{
+    bestMatch: { key: string; value: string; priority: number } | null;
+    confidence: number;
+    matches: Array<{ key: string; value: string; score: number }>;
+  }> {
+    const message = incomingMessage.toLowerCase();
+    const matches: Array<{ key: string; value: string; score: number }> = [];
+
+    for (const item of replyData) {
+      const key = item.key.toLowerCase();
+      let score = 0;
+
+      // Exact match
+      if (message.includes(key)) {
+        score = 100;
+      }
+      // Partial match
+      else if (key.includes(message) || message.includes(key)) {
+        score = 80;
+      }
+      // Keyword matching
+      else {
+        const keywords = key.split(/\s+/);
+        const matchedKeywords = keywords.filter(keyword => 
+          keyword.length > 2 && message.includes(keyword)
+        );
+        score = (matchedKeywords.length / keywords.length) * 60;
+      }
+
+      if (score > 30) {
+        matches.push({
+          key: item.key,
+          value: item.value,
+          score
+        });
+      }
+    }
+
+    // Sort by score and priority
+    matches.sort((a, b) => {
+      const aPriority = replyData.find(item => item.key === a.key)?.priority || 1;
+      const bPriority = replyData.find(item => item.key === b.key)?.priority || 1;
+      return (b.score * bPriority) - (a.score * aPriority);
+    });
+
+    const bestMatch = matches.length > 0 ? {
+      key: matches[0].key,
+      value: matches[0].value,
+      priority: replyData.find(item => item.key === matches[0].key)?.priority || 1
+    } : null;
+
+    return {
+      bestMatch,
+      confidence: matches.length > 0 ? matches[0].score / 100 : 0,
+      matches: matches.slice(0, 5) // Top 5 matches
+    };
   }
 }
 

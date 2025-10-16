@@ -375,4 +375,104 @@ export const settingsApi = {
   },
 };
 
+// Auto-Reply API
+export const autoReplyApi = {
+  getAutoReplies: async (params?: {
+    page?: number;
+    limit?: number;
+    category?: string;
+    isActive?: boolean;
+  }): Promise<ApiResponse<{ autoReplies: any[]; total: number }>> => {
+    const response = await api.get('/auto-reply', { params });
+    return response.data;
+  },
+
+  createAutoReply: async (data: any): Promise<ApiResponse<any>> => {
+    const response = await api.post('/auto-reply', data);
+    return response.data;
+  },
+
+  updateAutoReply: async (id: string, data: any): Promise<ApiResponse<any>> => {
+    const response = await api.put(`/auto-reply/${id}`, data);
+    return response.data;
+  },
+
+  deleteAutoReply: async (id: string): Promise<ApiResponse<any>> => {
+    const response = await api.delete(`/auto-reply/${id}`);
+    return response.data;
+  },
+
+  toggleAutoReply: async (id: string): Promise<ApiResponse<any>> => {
+    const response = await api.post(`/auto-reply/${id}/toggle`);
+    return response.data;
+  },
+
+  testAutoReply: async (data: {
+    phoneNumber: string;
+    message: string;
+  }): Promise<ApiResponse<any>> => {
+    const response = await api.post('/auto-reply/test', data);
+    return response.data;
+  },
+
+  getAutoReplyLogs: async (params?: {
+    page?: number;
+    limit?: number;
+    status?: string;
+    autoReplyId?: string;
+  }): Promise<ApiResponse<any>> => {
+    const response = await api.get('/auto-reply/logs', { params });
+    return response.data;
+  },
+
+  getAutoReplyStatistics: async (period?: string): Promise<ApiResponse<any>> => {
+    const response = await api.get('/auto-reply/statistics', {
+      params: period ? { period } : {}
+    });
+    return response.data;
+  },
+
+  getReplyData: async (params?: {
+    page?: number;
+    limit?: number;
+    category?: string;
+    dataType?: string;
+  }): Promise<ApiResponse<{ replyData: any[]; total: number }>> => {
+    const response = await api.get('/auto-reply/data', { params });
+    return response.data;
+  },
+
+  createReplyData: async (data: any): Promise<ApiResponse<any>> => {
+    const response = await api.post('/auto-reply/data', data);
+    return response.data;
+  },
+
+  uploadReplyData: async (file: File, data: {
+    name: string;
+    category: string;
+  }): Promise<ApiResponse<any>> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('name', data.name);
+    formData.append('category', data.category);
+
+    const response = await api.post('/auto-reply/data/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+
+  testReplyData: async (id: string, message: string): Promise<ApiResponse<any>> => {
+    const response = await api.post(`/auto-reply/data/${id}/test`, { message });
+    return response.data;
+  },
+
+  deleteReplyData: async (id: string): Promise<ApiResponse<any>> => {
+    const response = await api.delete(`/auto-reply/data/${id}`);
+    return response.data;
+  },
+};
+
 export default api;

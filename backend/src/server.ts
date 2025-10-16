@@ -28,6 +28,7 @@ import contactsRoutes from './routes/contacts';
 import messagesRoutes from './routes/messages';
 import performanceRoutes from './routes/performance';
 import settingsRoutes from './routes/settings';
+import autoReplyRoutes from './routes/autoReply';
 
 // Load environment variables
 dotenv.config();
@@ -160,6 +161,7 @@ app.use('/api/contacts', apiLimiter, cacheMiddleware(300), contactsRoutes); // C
 app.use('/api/messages', apiLimiter, messagesRoutes);
 app.use('/api/performance', performanceRoutes);
 app.use('/api/settings', apiLimiter, settingsRoutes);
+app.use('/api/auto-reply', apiLimiter, autoReplyRoutes);
 
 // Socket.IO authentication middleware
 io.use(async (socket, next) => {
