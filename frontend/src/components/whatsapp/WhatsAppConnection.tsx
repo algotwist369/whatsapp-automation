@@ -246,8 +246,28 @@ export const WhatsAppConnectionComponent = memo(({ onConnectionChange }: WhatsAp
 
         {!isConnected && (
           <div className="mt-4">
+            {/* Show restoring state */}
+            {status?.state === 'restoring' && (
+              <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
+                <div className="flex">
+                  <div className="flex-shrink-0">
+                    <ArrowPathIcon className="h-5 w-5 text-blue-400 animate-spin" />
+                  </div>
+                  <div className="ml-3 flex-1">
+                    <h3 className="text-sm font-medium text-blue-800">
+                      Restoring WhatsApp Connection...
+                    </h3>
+                    <div className="mt-2 text-sm text-blue-700">
+                      <p>Your WhatsApp session is being restored. This may take 10-20 seconds.</p>
+                      <p className="mt-1 text-xs">No QR code needed - using existing session from your phone.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Show waiting state when connecting */}
-            {(isLoading || status?.state === 'connecting') && (
+            {(isLoading || status?.state === 'connecting') && status?.state !== 'restoring' && (
               <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
                 <div className="flex">
                   <div className="flex-shrink-0">
@@ -266,7 +286,7 @@ export const WhatsAppConnectionComponent = memo(({ onConnectionChange }: WhatsAp
             )}
 
             {/* Show not connected state when not loading */}
-            {!isLoading && status?.state !== 'connecting' && (
+            {!isLoading && status?.state !== 'connecting' && status?.state !== 'restoring' && (
               <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-md">
                 <div className="flex">
                   <div className="flex-shrink-0">

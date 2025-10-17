@@ -160,3 +160,12 @@ export interface BulkMessageFormData {
   category: MessageCategory;
   selectedContacts: string[];
 }
+
+export interface UserSettings {
+  messageDelay?: number;
+  emailDelay?: number;
+  maxRetries?: number;
+  aiEnabled?: boolean;
+  autoRetry?: boolean;
+  [key: string]: any;
+}

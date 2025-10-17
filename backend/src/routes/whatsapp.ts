@@ -83,23 +83,53 @@ router.get('/status', authenticate, async (req: Request, res: Response) => {
     // If user has WhatsApp connected in database but no active connection, try to restore
     if (user.whatsappConnected && !status.isConnected && status.state === 'not_connected') {
       console.log('User has WhatsApp connected in DB but no active connection, attempting restore...');
+      
+      // Check if session files exist
+      const hasSession = whatsappService.hasExistingSession(userId);
+      if (!hasSession) {
+        console.log('No session files found, marking as disconnected');
+        await User.findByIdAndUpdate(userId, { whatsappConnected: false });
+        return res.json({
+          success: true,
+          data: {
+            isConnected: false,
+            state: 'not_connected',
+            qr: null
+          }
+        });
+      }
+      
       try {
-        // Try to restore the connection
-        const restoreResult = await whatsappService.restoreUserConnection(userId);
-        if (restoreResult) {
-          console.log('Connection restoration initiated for user:', userId);
-          // Return status indicating restoration is in progress
-          return res.json({
-            success: true,
-            data: {
-              isConnected: false,
-              state: 'restoring',
-              qr: null
-            }
-          });
-        }
+        // Start restoration in background to avoid blocking the response
+        console.log('Starting background restoration for user:', userId);
+        
+        // Return immediately with restoring state
+        res.json({
+          success: true,
+          data: {
+            isConnected: false,
+            state: 'restoring',
+            qr: null
+          }
+        });
+        
+        // Restore connection in background
+        whatsappService.restoreUserConnection(userId).then((restoreResult) => {
+          if (restoreResult) {
+            console.log('✅ Background restoration completed for user:', userId);
+          } else {
+            console.log('❌ Background restoration failed for user:', userId);
+            User.findByIdAndUpdate(userId, { whatsappConnected: false });
+          }
+        }).catch((error) => {
+          console.error('❌ Background restoration error for user:', userId, error);
+          User.findByIdAndUpdate(userId, { whatsappConnected: false });
+        });
+        
+        // Already sent response, so return to avoid sending it twice
+        return;
       } catch (error) {
-        console.error('Error restoring connection:', error);
+        console.error('Error initiating restoration:', error);
         // Update database if restoration fails
         await User.findByIdAndUpdate(userId, { whatsappConnected: false });
       }
@@ -203,44 +233,6 @@ router.get('/qr', authenticate, async (req: Request, res: Response) => {
   }
 });
 
-// @route   POST /api/whatsapp/test-status
-// @desc    Test WebSocket status update
-// @access  Private
-router.post('/test-status', authenticate, async (req: Request, res: Response) => {
-  try {
-    const user = req.user!;
-    const userId = user._id.toString();
-    
-    // Get the Socket.IO instance
-    const io = req.app.get('io');
-    
-    if (io) {
-      // Emit a test status update
-      io.to(`user-${userId}`).emit('whatsapp-status-update', {
-        isConnected: true,
-        state: 'open',
-        qr: null
-      });
-      
-      res.json({
-        success: true,
-        message: 'Test status update sent via WebSocket'
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        message: 'Socket.IO not available'
-      });
-    }
-  } catch (error) {
-    console.error('Test status error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error'
-    });
-  }
-});
-
 // @route   POST /api/whatsapp/disconnect
 // @desc    Disconnect WhatsApp account
 // @access  Private
@@ -324,56 +316,6 @@ router.get('/debug', authenticate, async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('Debug info error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error'
-    });
-  }
-});
-
-// @route   POST /api/whatsapp/test-message
-// @desc    Send a test message
-// @access  Private
-router.post('/test-message', authenticate, async (req: Request, res: Response) => {
-  try {
-    const { phoneNumber, message } = req.body;
-    const user = req.user!;
-    const userId = user._id.toString();
-
-    if (!phoneNumber || !message) {
-      return res.status(400).json({
-        success: false,
-        message: 'Phone number and message are required'
-      });
-    }
-
-    // Check if WhatsApp is connected
-    if (!whatsappService.isConnected(userId)) {
-      return res.status(400).json({
-        success: false,
-        message: 'WhatsApp is not connected. Please connect first.'
-      });
-    }
-
-    const result = await whatsappService.sendMessage(userId, phoneNumber, message);
-
-    if (result.success) {
-      res.json({
-        success: true,
-        message: 'Test message sent successfully',
-        data: {
-          messageId: result.messageId
-        }
-      });
-    } else {
-      res.status(400).json({
-        success: false,
-        message: result.error || 'Failed to send test message'
-      });
-    }
-
-  } catch (error) {
-    console.error('Test message error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error'

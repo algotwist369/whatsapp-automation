@@ -28,6 +28,7 @@ class AutoReplyService {
   private replyDataCache: Map<string, any[]> = new Map();
   private cacheExpiry: Map<string, number> = new Map();
   private readonly CACHE_TTL = 300000; // 5 minutes cache
+  private processingQueue: Map<string, Promise<any>> = new Map(); // Prevent duplicate processing
 
   constructor() {
     this.startCacheCleanup();
@@ -53,13 +54,32 @@ class AutoReplyService {
   ): Promise<AutoReplyResult> {
     const startTime = Date.now();
     
+    // Check if already processing this exact message (prevent duplicates)
+    const queueKey = `${userId}:${phoneNumber}:${incomingMessage.substring(0, 50)}`;
+    if (this.processingQueue.has(queueKey)) {
+      console.log(`⏭️ Already processing similar message for ${phoneNumber}, skipping`);
+      return { shouldReply: false };
+    }
+    
     try {
       console.log(`🤖 Processing auto-reply for user ${userId}, phone: ${phoneNumber}`);
       
-      // Get or load active auto-replies for user
-      const autoReplies = await this.getActiveAutoReplies(userId);
-      if (autoReplies.length === 0) {
-        console.log('No active auto-replies found for user');
+      // Mark as processing
+      const processingPromise = (async () => {
+        // Get or load active auto-replies for user (cached)
+        const autoReplies = await this.getActiveAutoReplies(userId);
+        if (autoReplies.length === 0) {
+          console.log('No active auto-replies found for user');
+          return { shouldReply: false };
+        }
+        
+        return autoReplies;
+      })();
+      
+      this.processingQueue.set(queueKey, processingPromise);
+      const autoReplies = await processingPromise;
+      
+      if (!Array.isArray(autoReplies) || autoReplies.length === 0) {
         return { shouldReply: false };
       }
 
@@ -107,7 +127,7 @@ class AutoReplyService {
             await this.logAutoReply(
               userId,
               autoReply._id.toString(),
-              contact?._id,
+              contact?._id?.toString(),
               incomingMessage,
               autoReply.responseTemplate,
               response,
@@ -139,6 +159,9 @@ class AutoReplyService {
         shouldReply: false,
         error: error instanceof Error ? error.message : 'Unknown error'
       };
+    } finally {
+      // Clean up processing queue
+      this.processingQueue.delete(queueKey);
     }
   }
 
@@ -221,7 +244,7 @@ class AutoReplyService {
         await this.logAutoReply(
           userId,
           aiAutoReply._id.toString(),
-          contact?._id,
+          contact?._id?.toString(),
           incomingMessage,
           'AI Generated Response',
           aiResult.response,

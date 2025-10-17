@@ -29,6 +29,8 @@ import messagesRoutes from './routes/messages';
 import performanceRoutes from './routes/performance';
 import settingsRoutes from './routes/settings';
 import autoReplyRoutes from './routes/autoReply';
+import messageRecoveryRoutes from './routes/messageRecovery';
+import autoReplyTestRoutes from './routes/autoReplyTest';
 
 // Load environment variables
 dotenv.config();
@@ -162,6 +164,8 @@ app.use('/api/messages', apiLimiter, messagesRoutes);
 app.use('/api/performance', performanceRoutes);
 app.use('/api/settings', apiLimiter, settingsRoutes);
 app.use('/api/auto-reply', apiLimiter, autoReplyRoutes);
+app.use('/api/recovery', apiLimiter, messageRecoveryRoutes);
+app.use('/api/auto-reply-test', apiLimiter, autoReplyTestRoutes);
 
 // Socket.IO authentication middleware
 io.use(async (socket, next) => {
@@ -198,7 +202,7 @@ io.use(async (socket, next) => {
 io.on('connection', (socket: any) => {
   console.log('🔌 Client connected:', socket.id, 'User:', socket.user?.email);
 
-  socket.on('join-room', (userId: string) => {
+  socket.on('join-room', async (userId: string) => {
     // Verify the user is joining their own room
     if (socket.userId !== userId) {
       console.log('🔒 Unauthorized room join attempt:', userId, 'by user:', socket.userId);
@@ -207,6 +211,44 @@ io.on('connection', (socket: any) => {
     
     socket.join(`user-${userId}`);
     console.log(`📡 User ${userId} joined their room`);
+    
+    // Immediately send current WhatsApp status when user joins
+    try {
+      const status = whatsappService.getConnectionStatus(userId);
+      console.log(`📡 Sending initial WhatsApp status to user ${userId}:`, status);
+      
+      // Send status update immediately
+      io.to(`user-${userId}`).emit('whatsapp-status-update', {
+        isConnected: status.isConnected,
+        state: status.state,
+        qr: status.isConnected ? null : whatsappService.getQRCode(userId)
+      });
+      
+      // If user should be connected but isn't, trigger restoration
+      const User = require('./models/User').default;
+      const user = await User.findById(userId);
+      
+      if (user && user.whatsappConnected && !status.isConnected && status.state === 'not_connected') {
+        const hasSession = whatsappService.hasExistingSession(userId);
+        if (hasSession) {
+          console.log(`🔄 Auto-restoring WhatsApp connection for user ${userId} on socket join`);
+          
+          // Send restoring status
+          io.to(`user-${userId}`).emit('whatsapp-status-update', {
+            isConnected: false,
+            state: 'restoring',
+            qr: null
+          });
+          
+          // Restore in background
+          whatsappService.restoreUserConnection(userId).catch((error) => {
+            console.error(`❌ Auto-restoration failed for user ${userId}:`, error);
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error sending initial status:', error);
+    }
   });
 
   // Removed automatic status request handler - WebSocket events handle status updates

@@ -609,6 +609,30 @@ Output only the personalized message.`,
       formal: 'Use a very formal, official tone. Be extremely polite and structured.'
     };
 
+    // Get current date and time information for time-aware responses
+    const now = new Date();
+    const currentTime = now.toLocaleTimeString('en-IN', { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      hour12: true,
+      timeZone: 'Asia/Kolkata'
+    });
+    const currentDate = now.toLocaleDateString('en-IN', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      timeZone: 'Asia/Kolkata'
+    });
+    const currentHour = now.getHours();
+    const dayOfWeek = now.toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'Asia/Kolkata' });
+    
+    // Determine time of day
+    let timeOfDay = 'day';
+    if (currentHour < 12) timeOfDay = 'morning';
+    else if (currentHour < 17) timeOfDay = 'afternoon';
+    else timeOfDay = 'evening';
+
     // Build conversation context if available
     let conversationContext = '';
     if (conversationHistory && conversationHistory.length > 0) {
@@ -639,6 +663,20 @@ CONTACT NAME: "${contactName}"
 PERSONALITY: ${personalityInstructions[personality as keyof typeof personalityInstructions]}
 ${conversationContext}${specialInstructions}
 
+CURRENT DATE & TIME (IMPORTANT - Use this for time-aware responses):
+- Current Date: ${currentDate}
+- Current Time: ${currentTime}
+- Day of Week: ${dayOfWeek}
+- Time of Day: ${timeOfDay}
+- Current Hour: ${currentHour}h (24-hour format)
+
+⚠️ CRITICAL TIME RULES:
+1. NEVER suggest appointments for times that have ALREADY PASSED today
+2. If current time is 2pm, don't suggest "10am today" - suggest "tomorrow at 10am" or "later today at 4pm"
+3. Business hours are typically 9 AM to 8 PM
+4. If customer asks "can I come today at 3pm" and it's already 5pm, suggest tomorrow or next available time
+5. Always be realistic about timing - check current time before suggesting
+
 CONTEXT DATA:
 - Messages exchanged: ${contextData.previousMessages || 0}
 - Customer category: ${contextData.contactCategory || 'general'}
@@ -650,17 +688,57 @@ CONVERSATION STRATEGY:
 4. PERSUADE GENTLY: If hesitant, mention benefits/offers without being pushy
 5. GRACEFUL EXIT: If not interested, politely say goodbye and mention website
 
-RESPONSE RULES:
+RESPONSE RULES (Make it sound HUMAN):
 1. Keep SHORT (80-120 chars ideal, MAX 150)
 2. Be DIRECT and USEFUL
 3. ${conversationHistory.length > 0 ? 'Continue naturally - NO repeat greeting' : includeGreeting ? `Brief greeting: "Hi ${contactName}!"` : 'Skip greeting'}
 4. If INFO NOT AVAILABLE: Politely say "For detailed info, visit https://spaadvisor.in/ or call us!"
 5. For HESITANT customers: Briefly mention benefits/offers, ask if they want to know more
+6. Use conversational language (avoid robotic phrases)
+7. Add appropriate emojis (1-2 max) to feel warm and human
+8. If customer mentions specific time/date, validate it's in the future before confirming
+
+BOOKING & TIMING EXAMPLES (Follow these patterns):
+- If customer asks for appointment TODAY and it's already ${currentTime}:
+  ✅ "Our slots for today are full. How about tomorrow at 11am?"
+  ✅ "We can fit you in tomorrow morning. Would 10am work?"
+  ❌ "Perfect! See you today at 10am" (if it's already past 10am)
+
+- If customer asks "Can I come at 3pm?" and it's already 5pm:
+  ✅ "3pm has passed for today. Would tomorrow at 3pm work for you?"
+  ✅ "How about tomorrow at 3pm instead?"
+  ❌ "Sure, 3pm works!" (time has passed)
+
+- If it's ${timeOfDay} (${currentTime}):
+  ✅ Suggest times AFTER current time
+  ✅ Suggest tomorrow's times
+  ❌ DON'T suggest times that already passed today
+
+NATURAL CONVERSATION EXAMPLES:
+- Instead of: "Your appointment has been confirmed for 10am"
+  Say: "Great! I've noted down 10am tomorrow. See you then! 😊"
+
+- Instead of: "We offer deep tissue massage at Rs 2000"
+  Say: "Deep tissue is ₹2000 for 60 mins. Very popular! Want to book?"
+
+- Instead of: "Please visit our website"
+  Say: "Check out spaadvisor.in for more details! 😊"
 6. For NOT INTERESTED: "No problem! Visit https://spaadvisor.in/ anytime. Have a great day! 🙏" and STOP
 7. Use bullet points (•) for lists
 8. NO repetition
 9. Sound natural, like WhatsApp chat
 10. End with engaging question (unless customer said NO)
+
+SPECIFIC TIME/DATE HANDLING:
+- Current time is ${currentTime} on ${dayOfWeek}
+- If customer asks "today at 10am" and current time is after 10am:
+  → Say: "10am has passed. Tomorrow at 10am work for you?"
+- If customer asks "today at 5pm" and current time is 2pm:
+  → Say: "Sure! 5pm today works. See you then!"
+- If customer mentions specific date:
+  → Validate it's not in the past
+  → Confirm with day of week for clarity
+- Always suggest NEXT AVAILABLE slot, not past times
 
 EXAMPLES:
 Query: "thai massage price"

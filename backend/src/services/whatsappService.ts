@@ -5,6 +5,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import QRCode from 'qrcode';
 import dotenv from 'dotenv';
 import autoReplyService from './autoReplyService';
+import messageRecoveryService from './messageRecoveryService';
 dotenv.config();
 
 interface WhatsAppConnection {
@@ -199,15 +200,31 @@ class WhatsAppService {
       // Initialize the client
       await client.initialize();
       
-      // Wait a bit to see if connection is established
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // Wait longer for connection to establish (WhatsApp can take 10-15 seconds)
+      console.log(`⏳ Waiting for WhatsApp connection to establish for user: ${userId}...`);
+      
+      // Wait up to 20 seconds for connection
+      for (let i = 0; i < 20; i++) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        if (connection.isConnected && connection.connectionState === 'open') {
+          console.log(`✅ Successfully restored WhatsApp connection for user: ${userId} after ${i + 1} seconds`);
+          return true;
+        }
+        
+        // Log progress every 5 seconds
+        if ((i + 1) % 5 === 0) {
+          console.log(`⏳ Still waiting for connection... ${i + 1}s elapsed (state: ${connection.connectionState})`);
+        }
+      }
       
       if (connection.isConnected) {
-        console.log(`✅ Successfully restored WhatsApp connection for user: ${userId}`);
+        console.log(`✅ WhatsApp connection restored for user: ${userId}`);
         return true;
       } else {
-        console.log(`⚠️ Connection restoration in progress for user: ${userId}`);
-        return true; // Still return true as connection might establish later
+        console.log(`⚠️ Connection restoration taking longer than expected for user: ${userId}, but session exists`);
+        // Return true as the connection is still establishing and will emit status when ready
+        return true;
       }
     } catch (error) {
       console.error(`Error restoring connection for user ${userId}:`, error);
@@ -436,6 +453,42 @@ class WhatsAppService {
             qr: null
           });
         }, 100);
+        
+        // 🔄 RECOVERY: Process any pending messages that were missed during disconnection
+        setTimeout(async () => {
+          try {
+            console.log(`🔍 Checking for pending messages for user ${userId}...`);
+            const needsRecovery = await messageRecoveryService.needsRecovery(userId);
+            
+            if (needsRecovery) {
+              console.log(`🔄 Starting message recovery for user ${userId}...`);
+              const recoveryResult = await messageRecoveryService.processPendingMessages(userId);
+              
+              console.log(`✅ Message recovery completed:`, {
+                total: recoveryResult.totalPending,
+                processed: recoveryResult.processed,
+                replied: recoveryResult.replied,
+                failed: recoveryResult.failed
+              });
+              
+              // Emit recovery completion status via WebSocket
+              if (this.io) {
+                this.io.to(`user-${userId}`).emit('message-recovery-complete', {
+                  success: true,
+                  totalPending: recoveryResult.totalPending,
+                  processed: recoveryResult.processed,
+                  replied: recoveryResult.replied,
+                  failed: recoveryResult.failed
+                });
+              }
+            } else {
+              console.log(`✅ No pending messages to recover for user ${userId}`);
+            }
+          } catch (recoveryError) {
+            console.error(`❌ Message recovery failed for user ${userId}:`, recoveryError);
+            // Don't fail the connection if recovery fails
+          }
+        }, 2000); // Wait 2 seconds after connection is established
       });
 
       // Handle authentication failure
@@ -882,37 +935,80 @@ class WhatsAppService {
 
         const phoneNumber = msg.from.replace('@c.us', '');
         const messageText = msg.body;
+        const messageId = msg.id?._serialized || msg.id?.id;
         
         console.log(`📨 Incoming message from ${phoneNumber}: ${messageText.substring(0, 50)}...`);
 
-        // Process auto-reply (checks are done internally)
-        const autoReplyResult = await autoReplyService.processIncomingMessage(
-          userId,
-          phoneNumber,
-          messageText
-        );
-
-        if (autoReplyResult.shouldReply && autoReplyResult.response) {
-          console.log(`🤖 Auto-reply triggered for ${phoneNumber}`);
-          
-          // Send the auto-reply
-          const sendResult = await autoReplyService.sendAutoReply(
+        try {
+          // Process auto-reply (checks are done internally)
+          const autoReplyResult = await autoReplyService.processIncomingMessage(
             userId,
             phoneNumber,
-            autoReplyResult.response
+            messageText
           );
 
-          if (sendResult.success) {
-            console.log(`✅ Auto-reply sent successfully to ${phoneNumber}`);
+          if (autoReplyResult.shouldReply && autoReplyResult.response) {
+            console.log(`🤖 Auto-reply triggered for ${phoneNumber}`);
+            
+            // Send the auto-reply
+            const sendResult = await autoReplyService.sendAutoReply(
+              userId,
+              phoneNumber,
+              autoReplyResult.response
+            );
+
+            if (sendResult.success) {
+              console.log(`✅ Auto-reply sent successfully to ${phoneNumber}`);
+            } else {
+              console.error(`❌ Failed to send auto-reply to ${phoneNumber}:`, sendResult.error);
+              
+              // 💾 RECOVERY: Save message as pending if auto-reply failed
+              console.log(`💾 Saving message as pending for later recovery`);
+              await messageRecoveryService.savePendingMessage(
+                userId,
+                phoneNumber,
+                messageText,
+                messageId
+              );
+            }
           } else {
-            console.error(`❌ Failed to send auto-reply to ${phoneNumber}:`, sendResult.error);
+            console.log(`⏭️ No auto-reply triggered for ${phoneNumber}`);
           }
-        } else {
-          console.log(`⏭️ No auto-reply triggered for ${phoneNumber}`);
+
+        } catch (autoReplyError) {
+          console.error(`❌ Auto-reply processing failed for ${phoneNumber}:`, autoReplyError);
+          
+          // 💾 RECOVERY: Save message as pending if processing failed
+          console.log(`💾 Saving message as pending due to processing error`);
+          await messageRecoveryService.savePendingMessage(
+            userId,
+            phoneNumber,
+            messageText,
+            messageId
+          );
         }
 
       } catch (error) {
-        console.error('Error processing incoming message:', error);
+        console.error('Error in message listener:', error);
+        // Even if something goes wrong, try to save the message if possible
+        try {
+          const msg = message as any;
+          if (msg && !msg.fromMe && msg.type === 'chat') {
+            const phoneNumber = msg.from.replace('@c.us', '');
+            const messageText = msg.body;
+            const messageId = msg.id?._serialized || msg.id?.id;
+            
+            console.log(`💾 Saving message as pending due to listener error`);
+            await messageRecoveryService.savePendingMessage(
+              userId,
+              phoneNumber,
+              messageText,
+              messageId
+            );
+          }
+        } catch (saveError) {
+          console.error('Failed to save message as pending:', saveError);
+        }
       }
     });
     

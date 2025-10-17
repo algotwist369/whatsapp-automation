@@ -15,5 +15,5 @@ const NoSSRComponent = ({ children, fallback = null }: NoSSRProps) => {
 // Export with dynamic import to disable SSR
 export const NoSSR = dynamic(() => Promise.resolve(NoSSRComponent), {
   ssr: false,
-  loading: () => <>{fallback}</>
+  loading: () => null
 });

@@ -25,6 +25,7 @@ interface WhatsAppStore {
   setSocket: (socket: Socket | null) => void;
   startConnectionPolling: () => void;
   stopConnectionPolling: () => void;
+  startRestorationPolling: () => void;
   setStatusCheckInterval: (interval: NodeJS.Timeout | null) => void;
   stopStatusCheck: () => void;
 }
@@ -65,6 +66,18 @@ export const useWhatsAppStore = create<WhatsAppStore>()(
                 isConnected: status?.isConnected || false,
                 qrCode: status?.qr || null
               });
+              
+              // If status changed to restoring, start polling for updates
+              if (status?.state === 'restoring' && currentState.status?.state !== 'restoring') {
+                console.log('🔄 Status changed to restoring, starting restoration polling');
+                get().startRestorationPolling();
+              }
+              
+              // If connected, stop any polling
+              if (status?.isConnected && currentState.pollingInterval) {
+                console.log('✅ Connected, stopping polling');
+                get().stopConnectionPolling();
+              }
             }
           },
 
@@ -400,6 +413,54 @@ export const useWhatsAppStore = create<WhatsAppStore>()(
           clearInterval(pollingInterval);
           set({ pollingInterval: null });
         }
+      },
+
+      startRestorationPolling: () => {
+        const { pollingInterval } = get();
+        
+        // Clear any existing polling
+        if (pollingInterval) {
+          clearInterval(pollingInterval);
+        }
+        
+        let pollCount = 0;
+        const maxPolls = 20; // Poll for up to 30 seconds (20 * 1.5 seconds)
+        
+        console.log('🔄 Starting restoration polling...');
+        
+        // Start polling every 1.5 seconds
+        const interval = setInterval(async () => {
+          pollCount++;
+          
+          // Stop polling after max attempts
+          if (pollCount > maxPolls) {
+            console.log('⏰ Restoration polling timeout');
+            get().stopConnectionPolling();
+            return;
+          }
+          
+          try {
+            const response = await whatsappApi.getStatus();
+            if (response.success && response.data) {
+              console.log(`🔄 Restoration poll ${pollCount}/${maxPolls}:`, response.data);
+              get().setStatus(response.data);
+              
+              // Stop polling if connected or if state changed from restoring
+              if (response.data.isConnected || (response.data.state !== 'restoring' && response.data.state !== 'connecting')) {
+                console.log('✅ Restoration complete or state changed, stopping polling');
+                get().stopConnectionPolling();
+              }
+            }
+          } catch (error: any) {
+            console.error('Error during restoration polling:', error);
+            // Stop polling on authentication errors
+            if (error.response?.status === 401) {
+              get().stopConnectionPolling();
+            }
+          }
+        }, 1500); // Poll every 1.5 seconds
+        
+        set({ pollingInterval: interval });
       },
 
       setStatusCheckInterval: (interval) => {

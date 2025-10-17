@@ -6,18 +6,23 @@ const connectDB = async (): Promise<void> => {
     const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/whatsapp-bulk-messaging';
     
     const options = {
-      maxPoolSize: 20, // Increased pool size for better performance
-      minPoolSize: 5, // Maintain minimum connections
-      maxIdleTimeMS: 30000, // Close connections after 30 seconds of inactivity
-      serverSelectionTimeoutMS: 5000, // Keep trying to send operations for 5 seconds
-      socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
-      connectTimeoutMS: 10000, // 10 seconds to establish initial connection
+      maxPoolSize: 50, // Increased for high concurrency (from 20)
+      minPoolSize: 10, // Keep more connections ready (from 5)
+      maxIdleTimeMS: 60000, // Keep connections longer for better reuse
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+      connectTimeoutMS: 10000,
       family: 4, // Use IPv4, skip trying IPv6
-      retryWrites: true, // Enable retryable writes for better reliability
-      retryReads: true, // Enable retryable reads for better reliability
+      retryWrites: true,
+      retryReads: true,
+      compressors: ['zlib'], // Enable compression for better network performance
+      zlibCompressionLevel: 6, // Balanced compression
+      readPreference: 'primaryPreferred', // Use primary, fallback to secondary
+      w: 1, // Write concern - wait for acknowledgment from primary only (faster)
+      journal: true, // Ensure writes are persisted
     };
 
-    await mongoose.connect(mongoURI, options);
+    await mongoose.connect(mongoURI, options as mongoose.ConnectOptions);
     
     console.log('✅ MongoDB connected successfully');
     
